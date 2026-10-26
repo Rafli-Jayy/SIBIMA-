@@ -232,3 +232,45 @@ def daftar_ruang(hanya_aktif: bool = False):
 
             return cur.fetchall()
 
+
+
+def daftar_program_dengan_kuota():
+    """Daftar program beserta kuota terisi dan sisa kuota."""
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    p.id, p.kode, p.nama, p.jenjang, p.deskripsi,
+                    p.harga_bulanan, p.kuota, p.status,
+                    p.bobot_tugas, p.bobot_kuis, p.bobot_uts, p.bobot_uas,
+                    COALESCE(q.terisi, 0)::INT AS terisi,
+                    (p.kuota - COALESCE(q.terisi, 0))::INT AS sisa,
+                    p.created_at
+                FROM programs AS p
+                LEFT JOIN v_program_kuota AS q ON q.program_id = p.id
+                ORDER BY p.created_at DESC, p.id DESC;
+                """
+            )
+            return cur.fetchall()
+
+
+def ubah_ruang(ruang_id: int, **perubahan) -> bool:
+    """Ubah nama dan/atau kapasitas ruang tanpa menghapus riwayat jadwal."""
+    if type(ruang_id) is not int or ruang_id <= 0:
+        raise ValueError("ID ruang tidak valid.")
+    if not perubahan:
+        raise ValueError("Tidak ada perubahan ruang yang diberikan.")
+    kolom_diizinkan = {"nama", "kapasitas"}
+    if set(perubahan) - kolom_diizinkan:
+        raise ValueError("Kolom ruang tidak diizinkan.")
+    set_clause = ", ".join(f"{kolom} = %s" for kolom in perubahan)
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE rooms SET {set_clause} WHERE id = %s RETURNING id;",
+                (*perubahan.values(), ruang_id),
+            )
+            ditemukan = cur.fetchone() is not None
+        conn.commit()
+    return ditemukan

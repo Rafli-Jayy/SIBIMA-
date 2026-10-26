@@ -2,7 +2,7 @@
 
 from psycopg.conninfo import make_conninfo
 from psycopg_pool import ConnectionPool
-
+from app.ui.console import gagal, info, sukses
 from app.config import DB_CONFIG
 
 
@@ -48,7 +48,6 @@ _pool_ditutup = False
 
 def tes_koneksi() -> bool:
     """Menguji koneksi PostgreSQL dan menampilkan hasilnya di terminal."""
-    from app.ui.console import gagal, info, sukses
 
     try:
         info("Mencoba menghubungi PostgreSQL...")

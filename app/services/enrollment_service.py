@@ -1,4 +1,4 @@
-"""Service pendaftaran program bimbel untuk onboarding dan siswa aktif."""
+"""Service pendaftaran program bimbel untuk siswa dengan akun aktif."""
 
 import psycopg
 
@@ -9,9 +9,8 @@ from app.repositories import enrollment_repo, user_repo
 def daftar_program(student_id: int, program_id: int):
     """Daftarkan program untuk siswa yang sedang login.
 
-    Siswa aktif boleh mengajukan program tambahan.
-    Siswa terverifikasi yang masih menunggu admin boleh memilih satu paket
-    untuk onboarding; setelah paket dipilih, ia menunggu keputusan admin.
+    Pendaftaran program hanya boleh dilakukan setelah akun siswa disetujui
+    admin dan berstatus aktif. Persetujuan akun menerbitkan NIS secara terpisah.
     """
     if type(student_id) is not int or student_id <= 0:
         return False, "ID siswa tidak valid."
@@ -36,16 +35,12 @@ def daftar_program(student_id: int, program_id: int):
             return False, "Verifikasi email terlebih dahulu."
 
         status_user = user.get("status")
-        if status_user == "menunggu_konfirmasi":
-            # Akun siswa yang belum disetujui hanya boleh memilih satu paket.
-            riwayat = enrollment_repo.enrollment_siswa(session_student_id)
-            if any(item.get("status") in {"menunggu", "aktif"} for item in riwayat):
-                return False, (
-                    "Paket sudah dipilih dan sedang menunggu keputusan admin. "
-                    "Kamu belum bisa memilih paket lain sebelum keputusan admin."
-                )
-        elif status_user != "aktif":
-            return False, "Akun belum dapat mendaftar program. Hubungi administrator."
+        if status_user != "aktif":
+            return False, (
+                "Akun siswa harus disetujui admin terlebih dahulu. "
+                "NIS diterbitkan saat persetujuan akun; setelah akun aktif, "
+                "kamu dapat mendaftar program secara terpisah."
+            )
 
         hasil = enrollment_repo.buat_enrollment(
             student_id=session_student_id,
@@ -53,12 +48,6 @@ def daftar_program(student_id: int, program_id: int):
         )
 
         if hasil["berhasil"]:
-            if status_user == "menunggu_konfirmasi":
-                return True, (
-                    "Paket berhasil dipilih. Akun dan paketmu sekarang "
-                    "menunggu persetujuan admin. Kamu dapat logout dan login "
-                    "lagi untuk memeriksa statusnya."
-                )
             return True, "Pendaftaran program berhasil dikirim. Status: menunggu persetujuan admin."
 
         alasan = hasil.get("alasan")

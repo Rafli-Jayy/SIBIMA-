@@ -447,10 +447,8 @@ def _jalankan_onboarding(pengguna):
         console.print(
             Panel(
                 f"[bold white]Halo, [cyan]{pengguna.get('nama_lengkap', pengguna.get('username', 'Siswa'))}[/cyan]![/bold white]\n\n"
-                "Akunmu sudah terverifikasi, tetapi belum disetujui admin.\n"
-                "Kamu boleh memilih paket bimbel selagi menunggu. Persetujuan akun "
-                "berdiri sendiri dan akan menerbitkan NIS; paket yang dipilih tetap "
-                "menunggu persetujuan program secara terpisah.",
+                "Akunmu sedang menunggu persetujuan admin. Setelah akun disetujui, "
+                "NIS akan diterbitkan dan kamu dapat mendaftar program secara terpisah.",
                 title="STATUS AKUN",
                 border_style="bright_blue",
                 padding=(1, 2),
@@ -463,8 +461,8 @@ def _jalankan_onboarding(pengguna):
             console.print(
                 Panel(
                     "[bold yellow]Pilihan paket sudah diterima.[/bold yellow]\n"
-                    "Akun dan pendaftaran program diputuskan terpisah. NIS terbit saat "
-                    "akun disetujui; tagihan pertama dibuat saat program disetujui.\n"
+                    "Pendaftaran program yang tercatat tetap menunggu keputusan program. "
+                    "Persetujuan akun dan penerbitan NIS tetap merupakan proses terpisah.\n"
                     "Gunakan Muat Ulang Status untuk memeriksa keputusan admin.",
                     border_style="yellow",
                     padding=(1, 2),
@@ -516,11 +514,10 @@ def _jalankan_onboarding(pengguna):
 
         console.print(
             Panel(
-                "Kamu belum memilih paket bimbel.\n\n"
-                "Kamu bisa memilih program sekarang atau menunggu keputusan akun. "
-                "Admin dapat menyetujui akun dan menerbitkan NIS tanpa paket terpilih. "
-                "Setelah akun aktif, pendaftaran program dilakukan melalui antrean terpisah.",
-                title="PILIH PAKET BIMBEL",
+                "Belum ada pendaftaran program. Kamu dapat memilih program setelah "
+                "akun disetujui admin. NIS diterbitkan saat akun disetujui; "
+                "pendaftaran program dan tagihan diproses secara terpisah.",
+                title="MENUNGGU PERSETUJUAN AKUN",
                 border_style="cyan",
                 padding=(1, 3),
                 expand=True,
@@ -529,7 +526,6 @@ def _jalankan_onboarding(pengguna):
         pilihan = questionary.select(
             "Langkah berikutnya:",
             choices=[
-                Choice("🎓  Pilih paket bimbel sekarang", value="katalog"),
                 Choice("↻  Periksa status persetujuan akun", value="refresh"),
                 Choice("🚪  Logout", value="logout"),
             ],
@@ -548,12 +544,11 @@ def _jalankan_onboarding(pengguna):
         if pilihan == "refresh":
             continue
 
-        menu_katalog(pengguna)
-        # Setelah menu katalog kembali, ulangi pemeriksaan DB dan status.
+        # Akun belum aktif: hanya izinkan memeriksa status atau logout.
 
 
 def jalankan():
-    """Dashboard siswa; akun pending wajib menyelesaikan onboarding paket dulu."""
+    """Dashboard siswa; akun pending hanya dapat memeriksa status atau logout."""
     while True:
         pengguna = _pengguna_siswa()
         if pengguna is None:
@@ -562,8 +557,8 @@ def jalankan():
             _jeda()
             return
 
-        # Siswa boleh login sebelum approval hanya untuk memilih satu paket
-        # atau memeriksa status persetujuan. Tidak melihat menu belajar normal.
+        # Siswa boleh login sebelum approval hanya untuk memeriksa status akun.
+        # Pendaftaran program baru tersedia setelah akun berstatus aktif.
         if pengguna.get("status") == "menunggu_konfirmasi":
             lanjut_dashboard = _jalankan_onboarding(pengguna)
             if not lanjut_dashboard:
