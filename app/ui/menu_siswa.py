@@ -10,8 +10,8 @@ from rich.text import Text
 
 from app import session
 from app.repositories import enrollment_repo, program_repo, user_repo
-from app.services import enrollment_service, engagement_service
-from app.ui import menu_pembayaran
+from app.services import billing_service, enrollment_service, engagement_service, student_service
+from app.ui import menu_pembayaran, menu_siswa_academic
 from app.ui.console import (
     bersihkan_layar,
     console,
@@ -234,6 +234,35 @@ def _dashboard(pengguna, enrollments):
                 )
             )
 
+    # Ringkasan jadwal dan tagihan di dashboard mengikuti data akun aktif.
+    try:
+        from datetime import date
+        hari_ini = ["senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu"][date.today().weekday()]
+        ok_jadwal, jadwal_hari_ini = student_service.jadwal_saya(hari=hari_ini)
+        if ok_jadwal:
+            if jadwal_hari_ini:
+                isi_jadwal = "\n".join(
+                    f"[bold cyan]{item['jam_mulai'].strftime('%H:%M') if hasattr(item.get('jam_mulai'), 'strftime') else str(item.get('jam_mulai', '—'))[:5]}[/bold cyan] "
+                    f"{item.get('nama_program', '—')} • {item.get('nama_ruang', '—')}"
+                    for item in jadwal_hari_ini[:4]
+                )
+            else:
+                isi_jadwal = "Tidak ada jadwal kelas hari ini."
+            console.print(Panel(isi_jadwal, title="[bold cyan]JADWAL HARI INI[/bold cyan]", border_style="bright_blue", padding=(1, 2), expand=True))
+    except Exception:
+        # Ringkasan dashboard tidak boleh menggagalkan akses ke menu utama.
+        pass
+
+    try:
+        tagihan = billing_service.daftar_tagihan_saya(status="belum_dibayar")
+        if tagihan:
+            total_tagihan = sum(float(item.get("jumlah") or 0) for item in tagihan)
+            info(f"Tagihan belum lunas: {len(tagihan)} invoice • {rupiah(total_tagihan)}")
+        else:
+            info("Tagihan belum lunas: tidak ada.")
+    except Exception:
+        peringatan("Ringkasan tagihan sementara tidak dapat dimuat.")
+
     _tampilkan_pengumuman_terbaru()
 
 
@@ -267,28 +296,18 @@ def menu_katalog(pengguna):
             if p["id"] not in pernah_didaftarkan
         ]
 
-        tabel = Table(title="Program Buka dengan Kuota", header_style="bold cyan", expand=True)
-        tabel.add_column("Kode", width=8)
-        tabel.add_column("Nama program", min_width=24)
-        tabel.add_column("Jenjang", width=12)
-        tabel.add_column("Biaya/bulan", justify="right", min_width=16)
-        tabel.add_column("Kuota", justify="center", width=12)
-        tabel.add_column("Deskripsi", min_width=24, overflow="fold")
-
-        for p in program_tersedia:
-            tabel.add_row(
-                str(p.get("kode", "-")),
-                str(p.get("nama", "-")),
-                str(p.get("jenjang", "-")),
-                rupiah(p.get("harga_bulanan") or 0),
-                f"{p.get('sisa', 0)}/{p.get('kuota', 0)}",
-                str(p.get("deskripsi") or "-"),
-            )
-
-        if not program_tersedia:
-            tabel.add_row("-", "Tidak ada program baru yang tersedia", "-", "-", "-", "-")
-
-        console.print(tabel)
+        if program_tersedia:
+            menu_siswa_academic.tampilkan_katalog_paginasi(program_tersedia)
+        else:
+            tabel = Table(title="Program Buka dengan Kuota", header_style="bold cyan", expand=True)
+            tabel.add_column("Kode", width=8)
+            tabel.add_column("Nama program", min_width=24)
+            tabel.add_column("Jenjang", width=12)
+            tabel.add_column("Biaya/bulan", justify="right", min_width=16)
+            tabel.add_column("Kuota", justify="center", width=12)
+            tabel.add_column("Deskripsi", min_width=24, overflow="fold")
+            tabel.add_row("—", "Tidak ada program baru yang tersedia", "—", "—", "—", "—")
+            console.print(tabel)
 
         if semua_program and not program_tersedia:
             info(
@@ -296,27 +315,13 @@ def menu_katalog(pengguna):
                 "Pendaftaran ulang ke program yang sama belum didukung oleh constraint database saat ini."
             )
 
-        choices = [
-            Choice(
-                title=f"Daftar: {p['nama']} | {p['jenjang']} | {rupiah(p.get('harga_bulanan') or 0)} | sisa {p.get('sisa', 0)}",
-                value=p["id"],
-            )
-            for p in program_tersedia
-        ]
-        if choices:
-            choices.append(Separator("────────────────────────"))
-        choices.append(Choice("Kembali", value="kembali"))
-
-        dipilih = questionary.select(
-            "Pilih program untuk didaftarkan:",
-            choices=choices,
-            style=GAYA_SIBIMA,
-            qmark="🎓",
-            pointer="▶",
-            instruction=" (Gunakan ↑/↓ lalu Enter)",
-        ).ask()
-
-        if dipilih is None or dipilih == "kembali":
+        dipilih = menu_siswa_academic.pilih_data_paginasi(
+            "Pilih program untuk didaftarkan",
+            program_tersedia,
+            lambda p: f"Daftar: {p['nama']} | {p['jenjang']} | {rupiah(p.get('harga_bulanan') or 0)} | sisa {p.get('sisa', 0)}",
+            "id",
+        )
+        if dipilih is None:
             return
 
         program = next((p for p in program_tersedia if p["id"] == dipilih), None)
@@ -623,12 +628,13 @@ def jalankan():
             "Apa yang ingin kamu lakukan?",
             choices=[
                 Choice("🎓  Katalog Program — cari dan daftar kelas", value="katalog"),
-                Choice("📚  Kelas & Status Pendaftaran", value="pendaftaran"),
+                Choice("📚  Kelas Saya — status dan riwayat", value="pendaftaran"),
                 Choice("🗓️  Jadwal Saya", value="jadwal"),
                 Choice("📝  Absensi", value="absensi"),
                 Choice("📊  Nilai dan Rapor", value="nilai"),
                 Choice("💳  Tagihan dan Pembayaran", value="pembayaran"),
                 Choice("📖  Catatan Materi", value="materi"),
+                Choice("🤖  Tanya AI (opsional)", value="ai"),
                 Choice("👤  Profil Saya", value="profil"),
                 Separator("────────────────────────"),
                 Choice("🚪  Logout", value="logout"),
@@ -648,16 +654,18 @@ def jalankan():
         if pilihan == "katalog":
             menu_katalog(pengguna)
         elif pilihan == "pendaftaran":
-            menu_status_pendaftaran(pengguna, enrollments)
+            menu_siswa_academic.menu_kelas_saya()
         elif pilihan == "jadwal":
-            _menu_fitur_belum_terhubung("Jadwal Saya", enrollments)
+            menu_siswa_academic.menu_jadwal_saya()
         elif pilihan == "absensi":
-            _menu_fitur_belum_terhubung("Absensi", enrollments)
+            menu_siswa_academic.menu_absensi_siswa()
         elif pilihan == "nilai":
-            _menu_fitur_belum_terhubung("Nilai dan Rapor", enrollments)
+            menu_siswa_academic.menu_nilai_rapor()
         elif pilihan == "pembayaran":
             menu_pembayaran.menu_pembayaran_siswa()
         elif pilihan == "materi":
-            _menu_fitur_belum_terhubung("Catatan Materi", enrollments)
+            menu_siswa_academic.menu_catatan_materi()
+        elif pilihan == "ai":
+            menu_siswa_academic.menu_tanya_ai_info()
         elif pilihan == "profil":
-            _menu_fitur_belum_terhubung("Profil Saya", enrollments)
+            menu_siswa_academic.menu_profil_siswa()

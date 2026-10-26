@@ -9,3 +9,6 @@ bukti/*
 
 # Laporan CSV hasil ekspor lokal
 laporan/
+
+# Rapor TXT lokal siswa
+rapor/
