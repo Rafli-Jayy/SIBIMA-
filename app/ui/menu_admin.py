@@ -10,6 +10,7 @@ from rich.table import Table
 from app import session
 from app.repositories import user_repo, enrollment_repo, program_repo
 from app.services import approval_service, program_service, admin_enrollment_service
+from app.ui import menu_admin_data
 from app.ui.console import (
     console,
     bersihkan_layar,
@@ -1274,8 +1275,8 @@ def jalankan():
                 f"[bold white]Selamat datang, [cyan]{nama}[/cyan]![/bold white]\n"
                 "[dim]ROLE: ADMIN  •  SESI AKTIF[/dim]\n\n"
                 "[white]Pilih modul yang ingin dibuka.[/white]\n"
-                "[dim]Pusat Konfirmasi akun dan pendaftaran program sudah terhubung. "
-                "Modul lain dikembangkan bertahap.[/dim]",
+                "[dim]Pusat Konfirmasi, Manajemen Akun, Data Siswa/Tutor, "
+                "Program/Ruang, dan Pendaftaran telah dihubungkan ke database.[/dim]",
                 title="[bold cyan]DASHBOARD[/bold cyan]",
                 border_style="bright_blue",
                 padding=(1, 2),
@@ -1314,6 +1315,15 @@ def jalankan():
             continue
         if pilihan == "pendaftaran":
             menu_pendaftaran_admin()
+            continue
+        if pilihan == "akun":
+            menu_admin_data.menu_manajemen_akun_admin()
+            continue
+        if pilihan == "siswa":
+            menu_admin_data.menu_data_siswa_admin()
+            continue
+        if pilihan == "tutor":
+            menu_admin_data.menu_data_tutor_admin()
             continue
 
         label = next(

@@ -170,6 +170,44 @@ def menu_verifikasi_registrasi(username):
             return
 
 
+def _proses_password_sementara(user, password_lama):
+    """Memaksa pemilik akun mengganti password sementara sebelum masuk dashboard."""
+    bersihkan_layar()
+    tampilkan_header("Ganti Password Sementara")
+    console.print(Panel(
+        "Admin telah mereset password akun ini. Demi keamanan, buat password pribadi baru sebelum masuk dashboard.",
+        title="PERGANTIAN PASSWORD WAJIB", border_style="yellow", padding=(1, 2),
+    ))
+    for percobaan in range(3):
+        baru = questionary.password("Password baru (8-64 karakter, minimal satu huruf dan satu angka):", style=tema_sibima, qmark="🔐").ask()
+        if baru is None:
+            info("Login dibatalkan; password sementara masih berlaku.")
+            return None
+        konfirmasi = questionary.password("Ulangi password baru:", style=tema_sibima, qmark="🔁").ask()
+        if konfirmasi is None:
+            info("Login dibatalkan; password sementara masih berlaku.")
+            return None
+        if baru != konfirmasi:
+            gagal("Konfirmasi password tidak sama. Coba kembali.")
+            continue
+        if baru == password_lama:
+            gagal("Password baru harus berbeda dari password sementara.")
+            continue
+        berhasil, pesan = auth_service.ganti_password(user["id"], password_lama, baru)
+        if not berhasil:
+            gagal(pesan)
+            continue
+        from app.repositories import user_repo
+        terbaru = user_repo.cari_by_id(user["id"])
+        if not terbaru or terbaru.get("must_change_password"):
+            gagal("Password belum dapat dikonfirmasi tersimpan. Silakan coba login kembali.")
+            return None
+        sukses("Password berhasil diganti.")
+        return terbaru
+    gagal("Batas percobaan pergantian password tercapai. Silakan login kembali.")
+    return None
+
+
 def menu_login():
     bersihkan_layar()
     tampilkan_header("Login")
@@ -187,6 +225,11 @@ def menu_login():
     berhasil, hasil = auth_service.login(username, password)
     
     if berhasil:
+        if hasil.get("must_change_password"):
+            hasil = _proses_password_sementara(hasil, password)
+            if hasil is None:
+                return
+
         session.set_user(hasil)
 
         nama = hasil["nama_lengkap"]
