@@ -3,7 +3,6 @@
 import psycopg
 
 from app import session
-from app.db import pool
 from app.repositories import (
     user_repo,
     profile_repo,
@@ -34,7 +33,7 @@ def _admin_aktif():
 
 
 def setujui_akun(user_id: int):
-    """Setujui tutor; untuk siswa, setujui akun + paket + invoice atomik."""
+    """Setujui akun secara mandiri; NIS/kode tutor terbit pada tahap akun."""
     admin = _admin_aktif()
     if admin is None:
         return False, "Akses ditolak. Hanya admin aktif yang dapat menyetujui akun."
@@ -51,100 +50,51 @@ def setujui_akun(user_id: int):
     if target.get("status") != "menunggu_konfirmasi":
         return False, "Akun tidak sedang menunggu persetujuan."
 
-    if target["role"] == "siswa":
-        # Siswa wajib sudah memilih satu paket. Operasi akun, NIS, enrollment,
-        # dan invoice pertama dijalankan di satu transaksi database.
-        try:
-            hasil = onboarding_repo.setujui_siswa_dengan_paket(
-                user_id=target["id"],
-                approved_by=admin["id"],
-            )
-        except ValueError as exc:
-            return False, str(exc)
-        except (psycopg.Error, RuntimeError) as exc:
-            return False, (
-                "Persetujuan akun, paket, dan tagihan gagal; transaksi dibatalkan "
-                f"({type(exc).__name__}). Periksa database sebelum mencoba lagi."
-            )
-
-        invoice = hasil.get("invoice")
-        detail = (
-            f"NIS: {hasil['nis']}\n"
-            f"Program: {hasil['nama_program']} ({hasil['kode_program']})\n"
-            f"Jenjang: {hasil['jenjang']}"
-        )
-        if invoice:
-            detail += (
-                f"\nNo. invoice: {invoice['no_invoice']}"
-                f"\nTagihan pertama: {_format_rupiah(invoice['jumlah'])}"
-                f"\nPeriode: {invoice['periode'].strftime('%B %Y')}"
-                f"\nJatuh tempo: {invoice['jatuh_tempo'].strftime('%d-%m-%Y')}"
-            )
-            detail_pesan = (
-                f" Tagihan pertama {invoice['no_invoice']} sebesar "
-                f"{_format_rupiah(invoice['jumlah'])}, jatuh tempo "
-                f"{invoice['jatuh_tempo'].strftime('%d-%m-%Y')}."
-            )
-        else:
-            detail += "\nProgram gratis; tidak dibuat invoice bernilai nol."
-            detail_pesan = " Program gratis, tidak dibuat tagihan."
-
-        try:
-            terkirim = email_service.kirim_notifikasi_status(
-                email=hasil["email"],
-                nama=hasil["nama_lengkap"],
-                kategori="akun",
-                status="aktif",
-                detail=detail,
-            )
-        except Exception:
-            terkirim = False
-
-        pesan = (
-            f"Akun {hasil['username']} disetujui; NIS {hasil['nis']} diterbitkan, "
-            f"program {hasil['nama_program']} diaktifkan.{detail_pesan}"
-        )
-        if not terkirim:
-            return True, pesan + " Email notifikasi gagal dikirim."
-        return True, pesan + " Email pemberitahuan telah dikirim."
-
-    # Tutor tidak memilih paket; cukup persetujuan akun dan penerbitan kode tutor.
     try:
-        profile_repo.proses_persetujuan_akun(
+        # Penerbitan identitas dan aktivasi akun berada di satu transaksi.
+        # Untuk siswa, pendaftaran program tetap menunggu keputusan terpisah.
+        hasil = profile_repo.proses_persetujuan_akun(
             user_id=target["id"],
             approved_by=admin["id"],
             status="aktif",
         )
-        terbaru = user_repo.cari_by_id(target["id"])
-        if terbaru is None or terbaru.get("status") != "aktif":
-            return False, "Persetujuan akun gagal diverifikasi di database."
-        with pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT kode_tutor FROM tutors WHERE user_id = %s",
-                    (target["id"],),
-                )
-                row = cur.fetchone()
-                kode_tutor = row[0] if row else None
+        # Repository mengembalikan identitas dari transaksi yang sama, sehingga
+        # tidak perlu query pasca-commit yang bisa gagal setelah approval sukses.
+        identitas = hasil.get("identitas")
     except ValueError as exc:
         return False, str(exc)
     except psycopg.Error as exc:
-        return False, f"Terjadi kesalahan database saat menyetujui tutor ({type(exc).__name__})."
+        return False, (
+            "Terjadi kesalahan database saat menyetujui akun "
+            f"({type(exc).__name__})."
+        )
+
+    if target["role"] == "siswa":
+        detail = (
+            f"NIS: {identitas or '-'}\n"
+            "Akun siswa telah disetujui. Pendaftaran program, jika ada, "
+            "tetap menunggu persetujuan admin secara terpisah."
+        )
+        pesan = f"Akun siswa {target['username']} disetujui."
+        if identitas:
+            pesan += f" NIS {identitas} diterbitkan."
+    else:
+        detail = f"Kode tutor: {identitas}" if identitas else None
+        pesan = f"Akun tutor {target['username']} berhasil disetujui."
+        if identitas:
+            pesan += f" Kode tutor: {identitas}."
 
     try:
         terkirim = email_service.kirim_notifikasi_status(
-            email=terbaru["email"],
-            nama=terbaru["nama_lengkap"],
+            email=target["email"],
+            nama=target["nama_lengkap"],
             kategori="akun",
             status="aktif",
-            detail=f"Kode tutor: {kode_tutor}" if kode_tutor else None,
+            detail=detail,
         )
     except Exception:
         terkirim = False
 
-    pesan = f"Akun tutor {terbaru['username']} berhasil disetujui."
-    if kode_tutor:
-        pesan += f" Kode tutor: {kode_tutor}."
     if not terkirim:
         return True, pesan + " Email notifikasi gagal dikirim."
     return True, pesan + " Email pemberitahuan telah dikirim."

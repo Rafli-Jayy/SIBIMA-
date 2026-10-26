@@ -110,41 +110,42 @@ def _tampilkan_detail_akun(user: dict):
         paket_menunggu = _paket_menunggu_siswa(user["id"])
         if paket_menunggu is None:
             peringatan("Detail pilihan paket belum dapat dibaca dari database.")
-        elif len(paket_menunggu) == 1:
-            paket = paket_menunggu[0]
+        elif not paket_menunggu:
             console.print(
                 Panel(
-                    f"[bold]{paket.get('nama_program', '-')}[/bold] "
-                    f"([cyan]{paket.get('kode_program', '-')}[/cyan])\n"
-                    f"Jenjang: {paket.get('jenjang', '-')}\n"
-                    f"Biaya per bulan: {_format_rupiah(paket.get('harga_bulanan', 0))}\n"
-                    "[dim]Jika akun disetujui, paket ini ikut diaktifkan dan "
-                    "tagihan pertama dibuat dalam transaksi yang sama.[/dim]",
-                    title="[bold cyan]PAKET PILIHAN SISWA[/bold cyan]",
+                    "Siswa belum memilih paket bimbel. Akun tetap dapat disetujui "
+                    "dan NIS akan diterbitkan. Siswa dapat memilih program setelah "
+                    "akun aktif.",
+                    title="[bold cyan]BELUM ADA PENDAFTARAN PROGRAM[/bold cyan]",
                     border_style="cyan",
                     padding=(1, 2),
                     expand=True,
                 )
             )
-        elif not paket_menunggu:
-            console.print(
-                Panel(
-                    "[bold yellow]Siswa belum memilih paket bimbel.[/bold yellow]\n"
-                    "Akun siswa belum dapat disetujui. Minta siswa login dan "
-                    "memilih satu paket terlebih dahulu.",
-                    title="[bold yellow]PAKET BELUM DIPILIH[/bold yellow]",
-                    border_style="yellow",
-                    padding=(1, 2),
-                    expand=True,
-                )
-            )
         else:
+            tabel_paket = Table(
+                title="Pendaftaran program yang menunggu keputusan terpisah",
+                header_style="bold cyan",
+                expand=True,
+            )
+            tabel_paket.add_column("Program")
+            tabel_paket.add_column("Kode")
+            tabel_paket.add_column("Jenjang")
+            tabel_paket.add_column("Biaya/bulan", justify="right")
+            for paket in paket_menunggu:
+                tabel_paket.add_row(
+                    str(paket.get("nama_program") or "-"),
+                    str(paket.get("kode_program") or "-"),
+                    str(paket.get("jenjang") or "-"),
+                    _format_rupiah(paket.get("harga_bulanan", 0)),
+                )
+            console.print(tabel_paket)
             console.print(
                 Panel(
-                    f"[bold red]Ditemukan {len(paket_menunggu)} paket yang masih menunggu.[/bold red]\n"
-                    "Persetujuan dinonaktifkan sampai antrean paket siswa dirapikan.",
-                    title="[bold red]PERIKSA DATA[/bold red]",
-                    border_style="red",
+                    "Persetujuan akun hanya mengaktifkan akun dan menerbitkan NIS. "
+                    "Pendaftaran program tetap menunggu keputusan pada antrean "
+                    "Pendaftaran Program; tagihan baru dibuat saat program disetujui.",
+                    border_style="cyan",
                     padding=(1, 2),
                     expand=True,
                 )
@@ -200,35 +201,17 @@ def _proses_aksi_akun(user: dict):
                 "oleh service sampai verifikasi selesai."
             )
 
-        paket_menunggu = (
-            _paket_menunggu_siswa(user["id"])
-            if user.get("role") == "siswa"
-            else []
-        )
-        boleh_setujui = (
-            user.get("role") == "tutor"
-            or (paket_menunggu is not None and len(paket_menunggu) == 1)
-        )
-        opsi_aksi = []
-        if boleh_setujui:
-            label_setuju = (
-                "✓  Setujui akun + paket + tagihan pertama"
+        opsi_aksi = [
+            Choice(
+                "✓  Setujui akun dan terbitkan NIS"
                 if user.get("role") == "siswa"
-                else "✓  Setujui akun dan terbitkan kode tutor"
-            )
-            opsi_aksi.append(Choice(label_setuju, value="setujui"))
-        elif user.get("role") == "siswa":
-            opsi_aksi.append(
-                Choice(
-                    "⚠  Paket belum dipilih / data paket perlu diperiksa",
-                    value="paket_kosong",
-                )
-            )
-        opsi_aksi.extend([
+                else "✓  Setujui akun dan terbitkan kode tutor",
+                value="setujui",
+            ),
             Choice("✕  Tolak akun", value="tolak"),
             Separator("────────────────────────"),
             Choice("↩  Kembali ke daftar", value="kembali"),
-        ])
+        ]
 
         aksi = questionary.select(
             "Tindakan untuk akun ini:",
@@ -242,19 +225,11 @@ def _proses_aksi_akun(user: dict):
         if aksi is None or aksi == "kembali":
             return
 
-        if aksi == "paket_kosong":
-            peringatan(
-                "Siswa harus memilih tepat satu paket yang masih menunggu. "
-                "Setujui akun belum dapat dilakukan."
-            )
-            input("Tekan Enter untuk kembali ke detail...")
-            continue
-
         if aksi == "setujui":
             deskripsi_aksi = (
-                "akun, paket bimbel, dan tagihan pertama"
+                "akun siswa dan penerbitan NIS"
                 if user.get("role") == "siswa"
-                else "akun tutor dan kode tutornya"
+                else "akun tutor dan penerbitan kode tutor"
             )
             yakin = questionary.confirm(
                 f"Setujui {deskripsi_aksi} untuk {user.get('username')}?",
@@ -323,9 +298,10 @@ def _menu_konfirmasi_akun():
             Panel(
                 "[white]Pilih pendaftar untuk melihat detail, lalu setujui "
                 "atau tolak dengan alasan.[/white]\n\n"
-                "[dim]Tutor disetujui bersama penerbitan kode tutor. Siswa wajib memilih "
-                "tepat satu paket; persetujuan akun siswa sekaligus mengaktifkan paket "
-                "dan membuat tagihan pertama. Email harus sudah terverifikasi.[/dim]",
+                "[dim]Persetujuan akun siswa dan tutor adalah keputusan tersendiri. "
+                "Persetujuan akun siswa menerbitkan NIS; pendaftaran program tetap "
+                "menunggu antrean konfirmasi program. Tagihan pertama dibuat setelah "
+                "pendaftaran program disetujui. Email harus sudah terverifikasi.[/dim]",
                 border_style="blue",
                 padding=(1, 2),
                 expand=True,
