@@ -157,18 +157,16 @@ DASHBOARD ADMIN  (ringkasan: siswa aktif, tutor, program, pemasukan bulan ini,
  |         +-- Pendaftaran akun (siswa/tutor)
  |         +-- Pendaftaran siswa ke program
  |         +-- Pembayaran
- |         +-- Izin siswa dan ubah jadwal tutor (opsional)
  +-- [2]  Manajemen Akun      (nonaktifkan, buka kunci, reset password)
  +-- [3]  Data Siswa          (lihat, cari, filter, ubah, nonaktifkan)
- +-- [4]  Data Tutor          (lihat, ubah, tarif per pertemuan, nonaktifkan)
+ +-- [4]  Data Tutor          (lihat, ubah, nonaktifkan)
  +-- [5]  Program dan Ruang   (tambah, ubah, tutup program; kelola ruang)
  +-- [6]  Pendaftaran         (pindah atau batalkan siswa dari program)
  +-- [7]  Jadwal              (tambah, ubah, nonaktifkan; cek bentrok)
- +-- [8]  Pembayaran          (tagihan, tunggakan, diskon, bukti pembayaran)
- +-- [9]  Penggajian Tutor    (opsional)
- +-- [10] Laporan             (pemasukan, siswa per program, kehadiran; ekspor CSV)
- +-- [11] Pengumuman
- +-- [12] Log Aktivitas
+ +-- [8]  Pembayaran          (tagihan, tunggakan, Virtual Account, bukti pembayaran)
+ +-- [9]  Laporan             (pemasukan, siswa per program, kehadiran; ekspor CSV)
+ +-- [10] Pengumuman
+ +-- [11] Log Aktivitas
  +-- [0]  Logout
 ```
 
@@ -190,7 +188,7 @@ alur register.
  7. Buat tagihan bulanan untuk semua pendaftaran aktif
  8. Konfirmasi PEMBAYARAN yang masuk (setujui atau tolak)
  9. Pantau Dashboard dan Laporan, buat Pengumuman
-10. Akhir bulan: cek honor tutor (opsional), ekspor laporan
+10. Pantau laporan dan ekspor data sesuai kebutuhan
 ```
 
 ### 2.3 Alur tiap modul admin
@@ -235,7 +233,7 @@ alur register.
 ```
  Pilih laporan -> tabel di layar -> [Ekspor CSV] (opsional)
  Sumber: pemasukan bulanan, siswa per program, rekap kehadiran,
-         rata-rata nilai, tunggakan, honor tutor
+         rata-rata nilai dan tunggakan
 ```
 
 ---
@@ -250,15 +248,12 @@ hanya bisa mengakses **kelas dan siswa miliknya sendiri**.
 ```
 DASHBOARD TUTOR  (jadwal hari ini, jumlah kelas dan siswa)
  |
- +-- [1] Jadwal Mengajar      (harian/mingguan; ajukan perubahan jadwal - opsional)
+ +-- [1] Jadwal Mengajar      (harian/mingguan)
  +-- [2] Kelas dan Siswa      (daftar siswa per kelas yang diampu)
  +-- [3] Absensi              (isi, ubah, rekap)
  +-- [4] Nilai                (tugas, kuis, UTS, UAS)
  +-- [5] Catatan Materi       (topik dan ringkasan per pertemuan)
- +-- [6] Kuis                 (buat soal; buat otomatis dengan Gemini - opsional)
- +-- [7] Umpan Balik Siswa    (manual atau draf AI - opsional)
- +-- [8] Riwayat dan Honor    (pertemuan terlaksana, estimasi honor, rating)
- +-- [9] Profil
+ +-- [6] Profil
  +-- [0] Logout
 ```
 
@@ -273,9 +268,7 @@ DASHBOARD TUTOR  (jadwal hari ini, jumlah kelas dan siswa)
       b. Isi topik dan ringkasan materi
       c. Isi absensi siswa (H / I / S / A)
  5. Berikan nilai: tugas, kuis, UTS, UAS
- 6. Buat kuis untuk latihan siswa (opsional)
- 7. Tulis umpan balik perkembangan siswa (opsional)
- 8. Akhir bulan: cek rekap pertemuan dan honor
+ 6. Perbarui profil jika diperlukan
 ```
 
 ### 3.3 Alur tiap modul tutor
@@ -305,14 +298,6 @@ DASHBOARD TUTOR  (jadwal hari ini, jumlah kelas dan siswa)
     Selama UTS/UAS belum ada, hasilnya "nilai sementara".
 ```
 
-**Kuis**
-
-```
- Buat kuis (pilih program, judul)
-   -> tambah soal: pertanyaan, opsi A-D, kunci jawaban
-   -> atau [Buat otomatis dengan Gemini] (opsional)
-   -> kuis aktif dan muncul di menu siswa
-```
 
 ---
 
@@ -329,13 +314,12 @@ DASHBOARD SISWA  (jadwal hari ini, tagihan jatuh tempo, pengumuman terbaru)
  +-- [1]  Katalog Program     (lihat, daftar mandiri)
  +-- [2]  Kelas Saya          (program diikuti, tutor, status)
  +-- [3]  Jadwal              (harian/mingguan, pengingat jadwal terdekat)
- +-- [4]  Absensi             (riwayat dan persentase; ajukan izin - opsional)
+ +-- [4]  Absensi             (riwayat dan persentase)
  +-- [5]  Nilai dan Rapor     (nilai per mapel, rata-rata, cetak rapor TXT)
  +-- [6]  Pembayaran          (tagihan, bayar, riwayat, bukti)
- +-- [7]  Materi dan Kuis     (catatan materi, kerjakan kuis, riwayat skor)
- +-- [8]  Nilai Tutor         (beri rating dan masukan)
- +-- [9]  Tanya AI            (opsional, Gemini)
- +-- [10] Profil
+ +-- [7]  Catatan Materi      (ringkasan per pertemuan)
+ +-- [8]  Tanya AI            (opsional, Gemini)
+ +-- [9]  Profil
  +-- [0]  Logout
 ```
 
@@ -351,8 +335,7 @@ DASHBOARD SISWA  (jadwal hari ini, tagihan jatuh tempo, pengumuman terbaru)
  5. Bayar tagihan (lihat bagian 5)
  6. Ikuti kelas sesuai jadwal
  7. Pantau absensi, nilai, dan rapor
- 8. Kerjakan kuis latihan
- 9. Beri rating untuk tutor
+
 ```
 
 ### 4.3 Alur tiap modul siswa
@@ -375,17 +358,6 @@ DASHBOARD SISWA  (jadwal hari ini, tagihan jatuh tempo, pengumuman terbaru)
  Pendaftaran tersimpan (status: menunggu) -> menunggu admin
 ```
 
-**Kuis**
-
-```
- Pilih kuis -> jawab soal satu per satu (A-D)
-        |
-        v
- Skor dihitung otomatis -> tampil benar/salah dan skor akhir
-        |
-        v
- Hasil tersimpan di riwayat kuis
-```
 
 **Rapor**
 
@@ -396,58 +368,55 @@ DASHBOARD SISWA  (jadwal hari ini, tagihan jatuh tempo, pengumuman terbaru)
 
 ---
 
-## 5. Alur pembayaran (simulasi)
+## 5. Alur pembayaran (simulasi Virtual Account)
 
-Tidak memakai payment gateway sungguhan. Program meniru alurnya, dan semua kode
-dibuat secara acak.
+Pembayaran menggunakan satu metode, yaitu **Virtual Account (VA)**, dan harus
+membayar **seluruh nominal tagihan** dalam satu transaksi. Tidak ada cicilan,
+diskon, pilihan E-Wallet/QRIS/tunai, atau kedaluwarsa pembayaran. Program tetap
+mensimulasikan proses pembayaran; bukan integrasi payment gateway sungguhan.
 
 ```
  SISWA                                SISTEM                       ADMIN
  -----                                ------                       -----
- Pilih tagihan, pilih metode
- (VA / E-Wallet / QRIS / Tunai)
+ Pilih tagihan
         |
         v
-                         buat kode bayar acak
+                         buat satu kode Virtual Account
+                         jumlah yang harus dibayar = total tagihan
                          status: menunggu_pembayaran
-                         batas waktu: 24 jam
         |
         v
- Tampil instruksi: kode, jumlah, batas bayar
+ Tampilkan kode VA dan nominal penuh
         |
         v
  Klik "Saya sudah membayar"
- isi nominal (harus sesuai)
         |
         v
                          status: menunggu_konfirmasi  ---------->  Pusat Konfirmasi
-                                                                    cek nominal
+                                                                    cek pembayaran
                                                                         |
                                                        +----------------+----------------+
                                                        v                                 v
                                                     SETUJUI                            TOLAK
                                               pembayaran: lunas                  pembayaran: ditolak
-                                              tagihan: lunas / cicilan           (alasan dicatat,
-                                              bukti pembayaran dibuat             siswa bisa bayar ulang)
+                                              tagihan: lunas                     alasan penolakan dicatat
+                                              bukti pembayaran dibuat            siswa dapat mengulang
         |
         v
- Lihat status dan bukti di Riwayat Pembayaran
-
- Lewat batas waktu tanpa klik "sudah bayar" -> status: kedaluwarsa
- (siswa membuat kode pembayaran baru)
+ Lihat status dan bukti pada riwayat pembayaran
 ```
 
 | Status pembayaran | Arti |
 |---|---|
-| `menunggu_pembayaran` | Kode dibuat, belum dibayar (ada batas waktu) |
-| `menunggu_konfirmasi` | Siswa sudah menekan "sudah bayar" |
-| `lunas` | Dikonfirmasi admin |
-| `ditolak` | Ditolak admin |
-| `kedaluwarsa` | Melewati batas waktu |
-| `dibatalkan` | Dibatalkan siswa |
+| `menunggu_pembayaran` | Kode Virtual Account dibuat, belum dikonfirmasi siswa |
+| `menunggu_konfirmasi` | Siswa melaporkan sudah membayar dan menunggu admin |
+| `lunas` | Pembayaran penuh telah dikonfirmasi admin |
+| `ditolak` | Konfirmasi ditolak admin; alasan dicatat |
 
-Status tagihan: `belum_dibayar` -> `cicilan` -> `lunas` (atau `batal`).
-Hanya pembayaran berstatus `lunas` yang dihitung sebagai pemasukan di laporan.
+Status tagihan: `belum_dibayar` -> `lunas` (atau `batal`). Pembayaran dihitung
+sebagai pemasukan hanya setelah status pembayaran menjadi `lunas`.
+
+Skema baru memiliki trigger yang menolak nominal pembayaran baru jika tidak sama dengan total invoice. Catatan implementasi: alur pembuatan kode VA, pengiriman konfirmasi siswa, dan keputusan admin pada service checkout/pembayaran masih berupa kerangka.
 
 ---
 
@@ -468,9 +437,9 @@ tabel mana yang berubah.
 | 8 | Siswa | Membayar (simulasi) | `payments` |
 | 9 | Admin | Mengonfirmasi pembayaran | `payments`, `invoices` |
 | 10 | Tutor | Membuka pertemuan dan mengisi absensi | `class_sessions`, `attendances` |
-| 11 | Tutor | Mengisi nilai, membuat kuis | `grades`, `quizzes`, `quiz_questions` |
-| 12 | Siswa | Melihat jadwal, absensi, nilai; mengerjakan kuis; menilai tutor | `quiz_attempts`, `tutor_reviews` |
-| 13 | Admin | Melihat laporan dan honor tutor | view `v_*` |
+| 11 | Tutor | Mengisi nilai akademik | `grades` |
+| 12 | Siswa | Melihat jadwal, absensi, nilai, dan catatan materi | `schedules`, `attendances`, `grades`, `class_sessions` |
+| 13 | Admin | Melihat laporan akademik dan pemasukan | view `v_*` |
 
 Setiap aksi penting (login, persetujuan, pembayaran) dicatat di `activity_logs`.
 
@@ -489,7 +458,7 @@ Setiap aksi penting (login, persetujuan, pembayaran) dicatat di `activity_logs`.
 | Nilai | Lihat semua | Isi untuk kelasnya | Lihat milik sendiri |
 | Pembayaran | Kelola dan konfirmasi | - | Bayar dan lihat milik sendiri |
 | Pengumuman | Buat | Lihat | Lihat |
-| Laporan | Penuh | Terbatas (honor sendiri) | - |
+| Laporan | Penuh | - | - |
 | Log aktivitas | Lihat | - | - |
 
 Aturan penerapan: setiap fungsi memfilter data dengan id pengguna yang sedang
@@ -544,9 +513,8 @@ python -m pytest
 
 ### Ringkasan database
 
-22 tabel dan 7 view. Konfirmasi admin memakai kolom `status`, `processed_by`,
-dan `alasan_tolak` pada tabel terkait. Data tidak dihapus permanen: akun,
-pendaftaran, dan pembayaran hanya berubah status sehingga riwayat tetap utuh.
+15 tabel dan 5 view setelah fitur kuis mandiri, izin/perubahan jadwal, honor tutor, rating tutor, dan umpan balik dihapus. Konfirmasi admin memakai kolom `status`, `processed_by`,
+dan `alasan_tolak` pada tabel terkait. Riwayat pembayaran lama tetap disimpan oleh migrasi; status pembayaran historis yang sudah tidak digunakan dinormalisasi dan dicatat pada alasan penolakan. Data fitur yang dicabut dihapus sesuai daftar migrasi.
 Jadwal bentrok (tutor dan ruang) ditolak langsung oleh PostgreSQL.
 Cadangan data: `pg_dump -U bimbel_user -d bimbel_db > cadangan.sql`.
 
@@ -567,7 +535,6 @@ SIBIMA/
 │   │   ├── otp_repo.py
 │   │   ├── profile_repo.py
 │   │   ├── program_repo.py
-│   │   ├── quiz_repo.py
 │   │   ├── report_repo.py
 │   │   ├── schedule_repo.py
 │   │   └── user_repo.py
@@ -581,7 +548,6 @@ SIBIMA/
 │   │   ├── email_service.py
 │   │   ├── enrollment_service.py
 │   │   ├── otp_service.py
-│   │   ├── quiz_service.py
 │   │   └── report_service.py
 │   ├── ui/
 │   │   ├── __init__.py

@@ -30,14 +30,12 @@ CREATE TYPE program_status    AS ENUM ('buka', 'tutup');
 CREATE TYPE nama_hari         AS ENUM ('senin', 'selasa', 'rabu', 'kamis',
                                        'jumat', 'sabtu', 'minggu');
 CREATE TYPE enrollment_status AS ENUM ('menunggu', 'aktif', 'ditolak', 'batal', 'selesai');
-CREATE TYPE invoice_status    AS ENUM ('belum_dibayar', 'cicilan', 'lunas', 'batal');
-CREATE TYPE payment_method    AS ENUM ('va', 'ewallet', 'qris', 'tunai');
+CREATE TYPE invoice_status    AS ENUM ('belum_dibayar', 'lunas', 'batal');
 CREATE TYPE payment_status    AS ENUM ('menunggu_pembayaran', 'menunggu_konfirmasi',
-                                       'lunas', 'ditolak', 'kedaluwarsa', 'dibatalkan');
+                                       'lunas', 'ditolak');
 CREATE TYPE session_status    AS ENUM ('terlaksana', 'batal');
 CREATE TYPE attendance_status AS ENUM ('H', 'I', 'S', 'A');   -- Hadir, Izin, Sakit, Alpa
 CREATE TYPE grade_type        AS ENUM ('tugas', 'kuis', 'uts', 'uas');
-CREATE TYPE request_status    AS ENUM ('menunggu', 'disetujui', 'ditolak');
 
 -- Tipe range waktu (untuk deteksi jadwal bentrok)
 CREATE TYPE timerange AS RANGE (subtype = time);
@@ -132,7 +130,6 @@ CREATE TABLE tutors (
     kode_tutor          VARCHAR(10) UNIQUE,          -- diisi saat admin menyetujui akun
     keahlian            VARCHAR(150),
     no_hp               VARCHAR(20),
-    tarif_per_pertemuan NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (tarif_per_pertemuan >= 0),
     FOREIGN KEY (user_id, role) REFERENCES users (id, role) ON DELETE CASCADE
 );
 
@@ -214,8 +211,7 @@ CREATE TABLE invoices (
     no_invoice    VARCHAR(30)    NOT NULL UNIQUE DEFAULT fn_next_invoice(),
     enrollment_id INT            NOT NULL REFERENCES enrollments(id),
     periode       DATE           NOT NULL CHECK (EXTRACT(DAY FROM periode) = 1),  -- tanggal 1 tiap bulan
-    jumlah        NUMERIC(12,2)  NOT NULL CHECK (jumlah > 0),
-    diskon_persen NUMERIC(5,2)   NOT NULL DEFAULT 0 CHECK (diskon_persen BETWEEN 0 AND 100),
+    jumlah        NUMERIC(12,2)  NOT NULL CHECK (jumlah >= 0), -- total akhir yang harus dibayar
     jatuh_tempo   DATE           NOT NULL,
     status        invoice_status NOT NULL DEFAULT 'belum_dibayar',
     created_at    TIMESTAMPTZ    NOT NULL DEFAULT now(),
@@ -226,11 +222,9 @@ CREATE INDEX idx_invoices_status ON invoices (status, jatuh_tempo);
 CREATE TABLE payments (
     id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     invoice_id   INT            NOT NULL REFERENCES invoices(id),
-    metode       payment_method NOT NULL,
-    kode_bayar   VARCHAR(30)    NOT NULL UNIQUE,     -- nomor VA / referensi / kode QRIS
+    kode_bayar   VARCHAR(30)    NOT NULL UNIQUE,     -- nomor Virtual Account
     jumlah       NUMERIC(12,2)  NOT NULL CHECK (jumlah > 0),
     status       payment_status NOT NULL DEFAULT 'menunggu_pembayaran',
-    expires_at   TIMESTAMPTZ    NOT NULL,
     paid_at      TIMESTAMPTZ,                         -- saat siswa menekan "sudah bayar"
     processed_by INT REFERENCES users(id),            -- admin yang mengonfirmasi
     processed_at TIMESTAMPTZ,
@@ -239,6 +233,29 @@ CREATE TABLE payments (
 );
 CREATE INDEX idx_payments_invoice ON payments (invoice_id);
 CREATE INDEX idx_payments_status  ON payments (status, created_at);
+
+-- Setiap percobaan pembayaran harus sebesar total tagihan penuh.
+CREATE FUNCTION fn_validate_full_payment() RETURNS TRIGGER AS $$
+DECLARE
+    nominal_tagihan NUMERIC(12,2);
+BEGIN
+    SELECT jumlah INTO nominal_tagihan
+    FROM invoices
+    WHERE id = NEW.invoice_id;
+
+    IF nominal_tagihan IS NULL THEN
+        RAISE EXCEPTION 'Tagihan % tidak ditemukan.', NEW.invoice_id;
+    END IF;
+    IF NEW.jumlah <> nominal_tagihan THEN
+        RAISE EXCEPTION 'Pembayaran harus penuh sebesar %.', nominal_tagihan;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_full_payment
+BEFORE INSERT OR UPDATE OF invoice_id, jumlah ON payments
+FOR EACH ROW EXECUTE FUNCTION fn_validate_full_payment();
 
 
 -- =====================================================================
@@ -280,45 +297,9 @@ CREATE TABLE grades (
 CREATE INDEX idx_grades_enroll ON grades (enrollment_id, jenis);
 
 
--- =====================================================================
--- 9. KUIS
--- =====================================================================
-CREATE TABLE quizzes (
-    id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    program_id INT          NOT NULL REFERENCES programs(id),
-    tutor_id   INT          NOT NULL REFERENCES tutors(user_id),
-    judul      VARCHAR(150) NOT NULL,
-    aktif      BOOLEAN      NOT NULL DEFAULT TRUE,
-    dibuat_ai  BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
-);
-
-CREATE TABLE quiz_questions (
-    id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    quiz_id    INT  NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
-    pertanyaan TEXT NOT NULL,
-    opsi_a     TEXT NOT NULL,
-    opsi_b     TEXT NOT NULL,
-    opsi_c     TEXT NOT NULL,
-    opsi_d     TEXT NOT NULL,
-    kunci      CHAR(1) NOT NULL CHECK (kunci IN ('A', 'B', 'C', 'D'))
-);
-
-CREATE TABLE quiz_attempts (
-    id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    quiz_id    INT          NOT NULL REFERENCES quizzes(id),
-    student_id INT          NOT NULL REFERENCES students(user_id),
-    benar      SMALLINT     NOT NULL CHECK (benar >= 0),
-    total      SMALLINT     NOT NULL CHECK (total > 0),
-    skor       NUMERIC(5,2) NOT NULL CHECK (skor BETWEEN 0 AND 100),
-    created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    CONSTRAINT ck_benar_total CHECK (benar <= total)
-);
-CREATE INDEX idx_attempts_student ON quiz_attempts (student_id, quiz_id);
-
 
 -- =====================================================================
--- 10. KOMUNIKASI, UMPAN BALIK, PERMOHONAN, LOG
+-- 9. KOMUNIKASI DAN LOG
 -- =====================================================================
 CREATE TABLE announcements (
     id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -328,57 +309,6 @@ CREATE TABLE announcements (
     created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Penilaian siswa untuk tutor
-CREATE TABLE tutor_reviews (
-    id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tutor_id   INT      NOT NULL REFERENCES tutors(user_id),
-    student_id INT      NOT NULL REFERENCES students(user_id),
-    program_id INT      NOT NULL REFERENCES programs(id),
-    rating     SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    masukan    TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_review UNIQUE (tutor_id, student_id, program_id)
-);
-
--- Umpan balik tutor untuk siswa
-CREATE TABLE student_feedbacks (
-    id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tutor_id   INT     NOT NULL REFERENCES tutors(user_id),
-    student_id INT     NOT NULL REFERENCES students(user_id),
-    program_id INT     NOT NULL REFERENCES programs(id),
-    isi        TEXT    NOT NULL,
-    dibuat_ai  BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Pengajuan izin tidak hadir (opsional, bagian Pusat Konfirmasi)
-CREATE TABLE leave_requests (
-    id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    student_id   INT            NOT NULL REFERENCES students(user_id),
-    schedule_id  INT            NOT NULL REFERENCES schedules(id),
-    tanggal      DATE           NOT NULL,
-    alasan       VARCHAR(200)   NOT NULL,
-    status       request_status NOT NULL DEFAULT 'menunggu',
-    processed_by INT REFERENCES users(id),
-    processed_at TIMESTAMPTZ,
-    created_at   TIMESTAMPTZ    NOT NULL DEFAULT now()
-);
-
--- Pengajuan perubahan jadwal oleh tutor (opsional, bagian Pusat Konfirmasi)
-CREATE TABLE schedule_change_requests (
-    id                INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    schedule_id       INT            NOT NULL REFERENCES schedules(id),
-    tutor_id          INT            NOT NULL REFERENCES tutors(user_id),
-    hari_baru         nama_hari      NOT NULL,
-    jam_mulai_baru    TIME           NOT NULL,
-    jam_selesai_baru  TIME           NOT NULL,
-    alasan            VARCHAR(200)   NOT NULL,
-    status            request_status NOT NULL DEFAULT 'menunggu',
-    processed_by      INT REFERENCES users(id),
-    processed_at      TIMESTAMPTZ,
-    created_at        TIMESTAMPTZ    NOT NULL DEFAULT now(),
-    CONSTRAINT ck_jam_baru CHECK (jam_mulai_baru < jam_selesai_baru)
-);
 
 CREATE TABLE activity_logs (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -391,7 +321,7 @@ CREATE INDEX idx_logs_waktu ON activity_logs (created_at DESC);
 
 
 -- =====================================================================
--- 11. VIEW UNTUK LAPORAN DAN DASHBOARD
+-- 10. VIEW UNTUK LAPORAN DAN DASHBOARD
 -- =====================================================================
 
 -- Sisa kuota tiap program (menunggu + aktif dihitung terisi)
@@ -403,13 +333,12 @@ FROM programs p
 LEFT JOIN enrollments e ON e.program_id = p.id
 GROUP BY p.id;
 
--- Tagihan beserta total setelah diskon dan jumlah yang sudah lunas
+-- Tagihan dan jumlah yang sudah lunas (jumlah adalah total akhir tagihan)
 CREATE VIEW v_tagihan_status AS
 SELECT i.id AS invoice_id, i.no_invoice, i.enrollment_id, e.student_id,
        i.periode, i.jatuh_tempo, i.status,
        i.jumlah,
-       i.diskon_persen,
-       ROUND(i.jumlah * (1 - i.diskon_persen / 100), 2)                    AS total_tagihan,
+       i.jumlah AS total_tagihan,
        COALESCE(SUM(p.jumlah) FILTER (WHERE p.status = 'lunas'), 0)        AS terbayar
 FROM invoices i
 JOIN enrollments e ON e.id = i.enrollment_id
@@ -477,22 +406,5 @@ FROM enrollments e
 JOIN programs p ON p.id = e.program_id
 LEFT JOIN pivot pv ON pv.enrollment_id = e.id;
 
--- Honor tutor per bulan = pertemuan terlaksana x tarif saat ini
-CREATE VIEW v_honor_tutor AS
-SELECT t.user_id AS tutor_id,
-       date_trunc('month', cs.tanggal)::date AS bulan,
-       COUNT(*)                              AS pertemuan,
-       COUNT(*) * t.tarif_per_pertemuan      AS honor
-FROM class_sessions cs
-JOIN schedules s ON s.id = cs.schedule_id
-JOIN tutors t    ON t.user_id = s.tutor_id
-WHERE cs.status = 'terlaksana'
-GROUP BY t.user_id, date_trunc('month', cs.tanggal), t.tarif_per_pertemuan;
-
--- Rating rata-rata tutor
-CREATE VIEW v_rating_tutor AS
-SELECT tutor_id, ROUND(AVG(rating), 1) AS rata_rating, COUNT(*) AS jumlah_ulasan
-FROM tutor_reviews
-GROUP BY tutor_id;
 
 COMMIT;

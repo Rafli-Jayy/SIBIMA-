@@ -1,4 +1,4 @@
-"""Service persetujuan akun, enrollment, dan permohonan SIBIMA."""
+"""Service persetujuan akun dan pendaftaran program SIBIMA."""
 
 import psycopg
 
@@ -8,8 +8,6 @@ from app.repositories import (
     user_repo,
     profile_repo,
     enrollment_repo,
-    engagement_repo,
-    schedule_repo,
     onboarding_repo,
 )
 from app.services import email_service
@@ -356,43 +354,3 @@ def tolak_enrollment(enrollment_id: int, alasan: str):
         return True, pesan + " Email notifikasi gagal dikirim."
     return True, pesan + " Email pemberitahuan telah dikirim."
 
-
-def proses_permohonan(
-    jenis: str,
-    permohonan_id: int,
-    keputusan: str,
-    alasan: str | None = None,
-):
-    """Proses permohonan izin siswa atau perubahan jadwal tutor."""
-    admin = _admin_aktif()
-    if admin is None:
-        return False, "Akses ditolak. Hanya admin aktif yang dapat memproses."
-    if type(permohonan_id) is not int or permohonan_id <= 0:
-        return False, "ID permohonan tidak valid."
-    if keputusan not in {"disetujui", "ditolak"}:
-        return False, "Keputusan harus 'disetujui' atau 'ditolak'."
-    if keputusan == "ditolak" and not (isinstance(alasan, str) and alasan.strip()):
-        return False, "Alasan penolakan wajib diisi."
-
-    if jenis == "izin":
-        nama_repo = "proses_permohonan_izin"
-        repo = engagement_repo
-    elif jenis == "perubahan_jadwal":
-        nama_repo = "proses_permohonan_perubahan_jadwal"
-        repo = schedule_repo
-    else:
-        return False, "Jenis permohonan tidak dikenal."
-
-    operasi = getattr(repo, nama_repo, None)
-    if not callable(operasi):
-        return False, f"Repository belum menyediakan fungsi {nama_repo}()."
-
-    try:
-        return operasi(
-            permohonan_id=permohonan_id,
-            keputusan=keputusan,
-            processed_by=admin["id"],
-            alasan=alasan.strip() if alasan else None,
-        )
-    except psycopg.Error:
-        return False, "Terjadi kesalahan database saat memproses permohonan."

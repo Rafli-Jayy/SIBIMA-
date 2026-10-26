@@ -1,8 +1,9 @@
 """Repository tagihan dan pembayaran SIBIMA.
 
-Implementasi di patch alur onboarding ini menyediakan helper transaksi untuk
-membuat invoice pertama. Fungsi billing lainnya tetap akan dikembangkan pada
-tahap modul pembayaran.
+Repository tagihan untuk skema pembayaran sederhana.
+
+Saat ini modul yang diimplementasikan baru helper transaksi untuk membuat invoice
+pertama. Alur pembayaran Virtual Account penuh masih menjadi pengembangan lanjutan.
 """
 
 
@@ -11,8 +12,7 @@ def buat_invoice_awal(cur, enrollment_id: int, jumlah):
 
     Cursor harus berada di transaksi aktif dan menggunakan row_factory=dict_row.
     Periode invoice adalah bulan berjalan; jatuh tempo tujuh hari kalender
-    setelah tanggal database saat proses dijalankan. Nominal nol tidak boleh
-    dibuat menjadi invoice karena constraint schema mensyaratkan jumlah > 0.
+    setelah tanggal database saat proses dijalankan. Program gratis tidak dibuatkan invoice.
     """
     if type(enrollment_id) is not int or enrollment_id <= 0:
         raise ValueError("ID enrollment tidak valid untuk pembuatan invoice.")
@@ -24,20 +24,18 @@ def buat_invoice_awal(cur, enrollment_id: int, jumlah):
     cur.execute(
         """
         INSERT INTO invoices (
-            enrollment_id, periode, jumlah, diskon_persen,
-            jatuh_tempo, status
+            enrollment_id, periode, jumlah, jatuh_tempo, status
         )
         VALUES (
             %s,
             date_trunc('month', CURRENT_DATE)::date,
             %s,
-            0,
             CURRENT_DATE + 7,
             'belum_dibayar'
         )
         ON CONFLICT (enrollment_id, periode) DO NOTHING
         RETURNING id, no_invoice, periode, jumlah,
-                  diskon_persen, jatuh_tempo, status;
+                  jatuh_tempo, status;
         """,
         (enrollment_id, jumlah),
     )
@@ -51,7 +49,7 @@ def buat_invoice_awal(cur, enrollment_id: int, jumlah):
     cur.execute(
         """
         SELECT id, no_invoice, periode, jumlah,
-               diskon_persen, jatuh_tempo, status
+               jatuh_tempo, status
         FROM invoices
         WHERE enrollment_id = %s
           AND periode = date_trunc('month', CURRENT_DATE)::date

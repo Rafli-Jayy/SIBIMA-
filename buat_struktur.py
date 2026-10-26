@@ -564,31 +564,24 @@ FILE_STUB = {
         ["kunci_program", "hitung_terisi", "buat_enrollment", "daftar_menunggu",
          "set_status", "enrollment_siswa", "siswa_aktif_di_program"]),
     "app/repositories/billing_repo.py": (
-        "Query tabel invoices dan payments.",
-        ["buat_tagihan_bulanan", "daftar_tagihan_siswa", "buat_pembayaran",
+        "Query tabel invoices dan payments dengan Virtual Account dan pembayaran penuh.",
+        ["buat_tagihan_bulanan", "daftar_tagihan_siswa", "buat_pembayaran_va",
          "tandai_sudah_bayar", "daftar_pembayaran_menunggu", "set_status_pembayaran",
-         "kedaluwarsakan_pembayaran", "hitung_ulang_status_invoice", "data_bukti"]),
+         "hitung_ulang_status_invoice", "data_bukti"]),
     "app/repositories/academic_repo.py": (
         "Query tabel class_sessions, attendances, dan grades.",
         ["buat_pertemuan", "pertemuan_berikutnya", "simpan_absensi",
          "absensi_siswa", "tambah_nilai", "ubah_nilai", "nilai_siswa"]),
-    "app/repositories/quiz_repo.py": (
-        "Query tabel quizzes, quiz_questions, dan quiz_attempts.",
-        ["buat_kuis", "tambah_soal", "daftar_kuis_program", "ambil_soal",
-         "simpan_hasil", "riwayat_kuis_siswa"]),
     "app/repositories/engagement_repo.py": (
-        "Query tabel announcements, tutor_reviews, student_feedbacks, "
-        "leave_requests, dan schedule_change_requests.",
-        ["buat_pengumuman", "daftar_pengumuman", "simpan_ulasan_tutor",
-         "simpan_umpan_balik", "ajukan_izin", "ajukan_ubah_jadwal",
-         "daftar_permohonan_menunggu", "proses_permohonan"]),
+        "Query tabel announcements.",
+        ["buat_pengumuman", "daftar_pengumuman"]),
     "app/repositories/log_repo.py": (
         "Query tabel activity_logs.",
         ["catat", "daftar_terbaru"]),
     "app/repositories/report_repo.py": (
         "Membaca view laporan.",
         ["pemasukan_bulanan", "rekap_kehadiran", "nilai_akhir_siswa",
-         "honor_tutor", "rating_tutor", "ringkasan_dashboard_admin"]),
+         "ringkasan_dashboard_admin"]),
 
     # ---- services: aturan bisnis, memanggil repository ----
     "app/services/auth_service.py": (
@@ -602,28 +595,24 @@ FILE_STUB = {
         "Pengiriman email OTP (SMTP) atau simulasi di terminal sesuai OTP_MODE.",
         ["kirim_otp_email(email, kode)", "tampilkan_otp_simulasi(kode)"]),
     "app/services/approval_service.py": (
-        "Pusat Konfirmasi admin: akun, pendaftaran program, permohonan.",
-        ["setujui_akun", "tolak_akun", "setujui_enrollment", "tolak_enrollment",
-         "proses_permohonan"]),
+        "Pusat Konfirmasi admin: akun, pendaftaran program, dan pembayaran.",
+        ["setujui_akun", "tolak_akun", "setujui_enrollment", "tolak_enrollment"]),
     "app/services/enrollment_service.py": (
         "Pendaftaran siswa ke program (kuota aman lewat transaksi).",
         ["daftar_program(student_id, program_id)", "batalkan(enrollment_id)"]),
     "app/services/billing_service.py": (
-        "Tagihan dan simulasi pembayaran.",
-        ["buat_tagihan_bulanan", "mulai_pembayaran", "konfirmasi_sudah_bayar",
+        "Tagihan dan simulasi pembayaran Virtual Account penuh.",
+        ["buat_tagihan_bulanan", "mulai_pembayaran_va", "konfirmasi_sudah_bayar",
          "konfirmasi_admin", "tolak_admin", "cetak_bukti"]),
     "app/services/academic_service.py": (
         "Pertemuan, absensi, dan nilai (dengan pengecekan hak akses tutor).",
         ["buka_pertemuan", "isi_absensi", "input_nilai", "rapor_siswa"]),
-    "app/services/quiz_service.py": (
-        "Membuat dan mengerjakan kuis.",
-        ["buat_kuis", "kerjakan_kuis", "hitung_skor"]),
     "app/services/report_service.py": (
         "Menyusun laporan dan ekspor CSV.",
         ["laporan_bulanan", "ekspor_csv"]),
     "app/services/ai_service.py": (
-        "Integrasi Gemini: tanya materi, buat soal, draf umpan balik.",
-        ["tanya_materi", "buat_soal", "draf_umpan_balik"]),
+        "Integrasi Gemini untuk tanya materi (opsional).",
+        ["tanya_materi"]),
 
     # ---- ui: menu per role ----
     "app/ui/menu_admin.py": (
@@ -632,11 +621,11 @@ FILE_STUB = {
          "menu_jadwal", "menu_pembayaran", "menu_laporan"]),
     "app/ui/menu_tutor.py": (
         "Menu dan layar untuk role tutor.",
-        ["jalankan()", "menu_jadwal", "menu_absensi", "menu_nilai", "menu_kuis"]),
+        ["jalankan()", "menu_jadwal", "menu_absensi", "menu_nilai", "menu_catatan_materi"]),
     "app/ui/menu_siswa.py": (
         "Menu dan layar untuk role siswa.",
         ["jalankan()", "menu_katalog", "menu_jadwal", "menu_nilai",
-         "menu_pembayaran", "menu_kuis"]),
+         "menu_pembayaran", "menu_catatan_materi"]),
 }
 
 FOLDER_KOSONG = ["sql", "bukti"]

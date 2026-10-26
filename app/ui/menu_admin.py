@@ -633,7 +633,7 @@ def _menu_konfirmasi_enrollment():
 
 
 def menu_konfirmasi():
-    """Pilih antrean konfirmasi akun atau pendaftaran program."""
+    """Pilih antrean akun, pendaftaran program, atau pembayaran."""
     while session.punya_role("admin"):
         bersihkan_layar()
         _tampilkan_header("Pusat Konfirmasi", "PILIH JENIS ANTREAN")
@@ -642,6 +642,7 @@ def menu_konfirmasi():
             choices=[
                 Choice("Akun siswa/tutor", value="akun"),
                 Choice("Pendaftaran program bimbel", value="enrollment"),
+                Choice("Konfirmasi pembayaran", value="pembayaran"),
                 Separator("────────────────────────"),
                 Choice("Kembali ke dashboard", value="kembali"),
             ],
@@ -656,6 +657,8 @@ def menu_konfirmasi():
             _menu_konfirmasi_akun()
         elif pilihan == "enrollment":
             _menu_konfirmasi_enrollment()
+        elif pilihan == "pembayaran":
+            _tampilkan_modul_belum_tersedia("Konfirmasi Pembayaran")
 
 def _tampilkan_modul_belum_tersedia(nama_modul: str):
     bersihkan_layar()

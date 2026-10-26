@@ -1,12 +1,3 @@
-"""Menu dan layar untuk role tutor.
-
-Fungsi yang direncanakan:
-    - jalankan()
-    - menu_jadwal
-    - menu_absensi
-    - menu_nilai
-    - menu_kuis
-"""
 """Dashboard dan navigasi awal tutor SIBIMA."""
 
 from app.ui.console import jalankan_menu_role
@@ -22,9 +13,7 @@ def jalankan():
             ("Kelas dan Siswa", "kelas"),
             ("Absensi", "absensi"),
             ("Nilai Siswa", "nilai"),
-            ("Kuis", "kuis"),
-            ("Umpan Balik Siswa", "umpan_balik"),
-            ("Honor dan Riwayat", "honor"),
+            ("Catatan Materi", "materi"),
             ("Profil Saya", "profil"),
         ],
     )

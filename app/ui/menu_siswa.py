@@ -349,7 +349,7 @@ def _menu_fitur_belum_terhubung(nama, enrollments):
     aktif = [item for item in enrollments if item["status"] == "aktif"]
     menunggu = [item for item in enrollments if item["status"] == "menunggu"]
 
-    if not aktif and nama in {"Jadwal Saya", "Absensi", "Nilai dan Rapor", "Tagihan dan Pembayaran", "Materi dan Kuis", "Penilaian Tutor"}:
+    if not aktif and nama in {"Jadwal Saya", "Absensi", "Nilai dan Rapor", "Tagihan dan Pembayaran", "Catatan Materi"}:
         if menunggu:
             isi = (
                 "Pendaftaran programmu masih menunggu persetujuan admin. "
@@ -587,8 +587,7 @@ def jalankan():
                 Choice("📝  Absensi", value="absensi"),
                 Choice("📊  Nilai dan Rapor", value="nilai"),
                 Choice("💳  Tagihan dan Pembayaran", value="pembayaran"),
-                Choice("📖  Materi dan Kuis", value="kuis"),
-                Choice("⭐  Penilaian Tutor", value="ulasan"),
+                Choice("📖  Catatan Materi", value="materi"),
                 Choice("👤  Profil Saya", value="profil"),
                 Separator("────────────────────────"),
                 Choice("🚪  Logout", value="logout"),
@@ -617,9 +616,7 @@ def jalankan():
             _menu_fitur_belum_terhubung("Nilai dan Rapor", enrollments)
         elif pilihan == "pembayaran":
             _menu_fitur_belum_terhubung("Tagihan dan Pembayaran", enrollments)
-        elif pilihan == "kuis":
-            _menu_fitur_belum_terhubung("Materi dan Kuis", enrollments)
-        elif pilihan == "ulasan":
-            _menu_fitur_belum_terhubung("Penilaian Tutor", enrollments)
+        elif pilihan == "materi":
+            _menu_fitur_belum_terhubung("Catatan Materi", enrollments)
         elif pilihan == "profil":
             _menu_fitur_belum_terhubung("Profil Saya", enrollments)

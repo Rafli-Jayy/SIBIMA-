@@ -1,7 +1,5 @@
-"""Integrasi Gemini: tanya materi, buat soal, draf umpan balik.
+"""Integrasi Gemini untuk tanya materi (opsional).
 
 Fungsi yang direncanakan:
     - tanya_materi
-    - buat_soal
-    - draf_umpan_balik
 """

@@ -14,8 +14,8 @@ def setujui_siswa_dengan_paket(user_id: int, approved_by: int) -> dict:
     """Aktifkan akun siswa + satu paket menunggu + invoice pertama dalam satu transaksi.
 
     Siswa wajib sudah verifikasi email dan memiliki tepat satu enrollment
-    berstatus menunggu. Paket gratis diaktifkan tanpa invoice karena kolom
-    invoices.jumlah mensyaratkan nilai lebih besar dari nol.
+    berstatus menunggu. Program gratis diaktifkan tanpa invoice; helper invoice
+    melewati nominal nol.
     """
     if type(user_id) is not int or user_id <= 0:
         raise ValueError("ID pengguna tidak valid.")
