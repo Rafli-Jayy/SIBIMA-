@@ -9,7 +9,7 @@ from rich.table import Table
 
 from app import session
 from app.repositories import user_repo, enrollment_repo, program_repo
-from app.services import approval_service, program_service, admin_enrollment_service
+from app.services import approval_service, program_service, admin_enrollment_service, schedule_service
 from app.ui import menu_admin_data
 from app.ui.console import (
     console,
@@ -992,6 +992,294 @@ def menu_program_ruang():
             aksi()
 
 
+
+# ---------------------------------------------------------------------------
+# Jadwal reguler: lihat/filter, tambah, ubah, dan nonaktifkan
+# ---------------------------------------------------------------------------
+
+_HARI_JADWAL = [
+    ("Senin", "senin"), ("Selasa", "selasa"), ("Rabu", "rabu"),
+    ("Kamis", "kamis"), ("Jumat", "jumat"), ("Sabtu", "sabtu"),
+    ("Minggu", "minggu"),
+]
+
+
+def _tabel_jadwal_admin(daftar, judul="Jadwal Mengajar"):
+    tabel = Table(title=judul, header_style="bold cyan", border_style="blue", expand=True)
+    for nama, kwargs in [
+        ("ID", {"justify": "right", "no_wrap": True}),
+        ("Hari", {"no_wrap": True}),
+        ("Waktu", {"no_wrap": True}),
+        ("Program", {"overflow": "fold"}),
+        ("Tutor", {"overflow": "fold"}),
+        ("Ruang", {"no_wrap": True}),
+        ("Siswa", {"justify": "right", "no_wrap": True}),
+        ("Pertemuan", {"justify": "right", "no_wrap": True}),
+        ("Kapasitas", {"justify": "right", "no_wrap": True}),
+        ("Status", {"no_wrap": True}),
+    ]:
+        tabel.add_column(nama, **kwargs)
+    for item in daftar:
+        status = "[green]AKTIF[/green]" if item["aktif"] else "[dim]NONAKTIF[/dim]"
+        tabel.add_row(
+            str(item["id"]), str(item["hari"]).capitalize(),
+            f"{item['jam_mulai'].strftime('%H:%M')}-{item['jam_selesai'].strftime('%H:%M')}",
+            f"{item.get('kode_program') or '-'} — {item.get('nama_program') or '-'}",
+            f"{item.get('kode_tutor') or '-'} — {item.get('nama_tutor') or '-'}",
+            str(item.get("nama_ruang") or "-"), str(item.get("jumlah_siswa", 0)),
+            str(item.get("jumlah_pertemuan", 0)), str(item.get("kapasitas_ruang", "-")), status,
+        )
+    console.print(tabel)
+
+
+def _ambil_opsi_jadwal(jenis, pertanyaan, aktif_saja=True):
+    fungsi = {
+        "program": schedule_service.opsi_program,
+        "tutor": schedule_service.opsi_tutor,
+        "ruang": schedule_service.opsi_ruang,
+    }[jenis]
+    berhasil, hasil = fungsi(aktif_saja=aktif_saja)
+    if not berhasil:
+        gagal(hasil)
+        _tekan_enter()
+        return None
+    if not hasil:
+        peringatan({"program": "Belum ada program terbuka.", "tutor": "Belum ada tutor aktif.", "ruang": "Belum ada ruang aktif."}[jenis])
+        _tekan_enter()
+        return None
+
+    def label(item):
+        if jenis == "program":
+            return f"ID {item['id']} • {item['kode']} • {item['nama']} ({item['jenjang']})"
+        if jenis == "tutor":
+            kode = item.get("kode_tutor") or "tanpa kode"
+            return f"ID {item['id']} • {kode} • {item['nama_lengkap']}"
+        return f"ID {item['id']} • {item['nama']} • kapasitas {item['kapasitas']}"
+
+    pilihan = questionary.select(
+        pertanyaan,
+        choices=[Choice(label(item), value=item["id"]) for item in hasil]
+        + [Separator("────────────────────────"), Choice("Kembali", value="kembali")],
+        style=TEMA_ADMIN, qmark="⚡", pointer="▶",
+        instruction=" (Gunakan ↑/↓ lalu Enter)",
+    ).ask()
+    return pilihan if type(pilihan) is int else None
+
+
+def _pilih_hari_jadwal(pertanyaan="Pilih hari:"):
+    hasil = questionary.select(
+        pertanyaan,
+        choices=[Choice(label, value=value) for label, value in _HARI_JADWAL]
+        + [Separator("────────────────────────"), Choice("Kembali", value="kembali")],
+        style=TEMA_ADMIN, qmark="⚡", pointer="▶",
+    ).ask()
+    return hasil if hasil in {value for _, value in _HARI_JADWAL} else None
+
+
+def _pilih_satu_jadwal(pertanyaan, *, hanya_aktif=None):
+    berhasil, hasil = schedule_service.daftar_jadwal(aktif=hanya_aktif)
+    if not berhasil:
+        gagal(hasil)
+        _tekan_enter()
+        return None
+    if not hasil:
+        peringatan("Tidak ada jadwal yang cocok.")
+        _tekan_enter()
+        return None
+    _tabel_jadwal_admin(hasil)
+    pilihan = questionary.select(
+        pertanyaan,
+        choices=[Choice(
+            f"ID {x['id']} • {x['hari'].capitalize()} {x['jam_mulai'].strftime('%H:%M')}-"
+            f"{x['jam_selesai'].strftime('%H:%M')} • {x['nama_program']} • {x['nama_tutor']} • {x['nama_ruang']}",
+            value=x["id"],
+        ) for x in hasil] + [Separator("────────────────────────"), Choice("Kembali", value="kembali")],
+        style=TEMA_ADMIN, qmark="⚡", pointer="▶",
+    ).ask()
+    if type(pilihan) is not int:
+        return None
+    return next((x for x in hasil if x["id"] == pilihan), None)
+
+
+def _jadwal_lihat_admin():
+    bersihkan_layar()
+    _tampilkan_header("Jadwal", "LIHAT JADWAL PER PROGRAM / TUTOR / RUANG / HARI")
+    kategori = questionary.select(
+        "Tampilkan jadwal berdasarkan:",
+        choices=[
+            Choice("Semua jadwal", "semua"), Choice("Per program", "program"),
+            Choice("Per tutor", "tutor"), Choice("Per ruang", "ruang"),
+            Choice("Per hari", "hari"),
+            Separator("────────────────────────"), Choice("Kembali", "kembali"),
+        ], style=TEMA_ADMIN, qmark="⚡", pointer="▶",
+    ).ask()
+    if kategori is None or kategori == "kembali":
+        return
+    filters = {}
+    if kategori in {"program", "tutor", "ruang"}:
+        identitas = _ambil_opsi_jadwal(kategori, f"{('Pilih ' + kategori)} untuk filter:", aktif_saja=False)
+        if identitas is None:
+            return
+        filters[{"program": "program_id", "tutor": "tutor_id", "ruang": "room_id"}[kategori]] = identitas
+    elif kategori == "hari":
+        hari = _pilih_hari_jadwal("Pilih hari yang ingin dilihat:")
+        if hari is None:
+            return
+        filters["hari"] = hari
+
+    berhasil, hasil = schedule_service.daftar_jadwal(**filters)
+    bersihkan_layar()
+    _tampilkan_header("Jadwal", "HASIL DAFTAR JADWAL")
+    if not berhasil:
+        gagal(hasil)
+    elif not hasil:
+        peringatan("Belum ada jadwal untuk filter tersebut.")
+    else:
+        _tabel_jadwal_admin(hasil)
+    _tekan_enter()
+
+
+def _jadwal_tambah_admin():
+    bersihkan_layar()
+    _tampilkan_header("Jadwal", "TAMBAH JADWAL MENGAJAR")
+    program_id = _ambil_opsi_jadwal("program", "Pilih program yang dijadwalkan:")
+    if program_id is None:
+        return
+    tutor_id = _ambil_opsi_jadwal("tutor", "Pilih tutor:")
+    if tutor_id is None:
+        return
+    room_id = _ambil_opsi_jadwal("ruang", "Pilih ruang:")
+    if room_id is None:
+        return
+    hari = _pilih_hari_jadwal()
+    if hari is None:
+        return
+    jam_mulai = questionary.text("Jam mulai (HH:MM, contoh 15:00):", style=TEMA_ADMIN).ask()
+    if jam_mulai is None:
+        return
+    jam_selesai = questionary.text("Jam selesai (HH:MM, contoh 16:30):", style=TEMA_ADMIN).ask()
+    if jam_selesai is None:
+        return
+    console.print(Panel(
+        f"Program ID: {program_id}\nTutor ID: {tutor_id}\nRuang ID: {room_id}\n"
+        f"Hari: {hari.capitalize()}\nWaktu: {jam_mulai}–{jam_selesai}",
+        title="Ringkasan Jadwal", border_style="cyan", padding=(1, 2), expand=True,
+    ))
+    yakin = questionary.confirm("Simpan jadwal ini?", default=False, style=TEMA_ADMIN).ask()
+    if yakin is not True:
+        info("Pembuatan jadwal dibatalkan.")
+        _tekan_enter()
+        return
+    berhasil, pesan = schedule_service.buat_jadwal({
+        "program_id": program_id, "tutor_id": tutor_id, "room_id": room_id,
+        "hari": hari, "jam_mulai": jam_mulai, "jam_selesai": jam_selesai,
+    })
+    sukses(pesan) if berhasil else gagal(pesan)
+    _tekan_enter()
+
+
+def _jadwal_ubah_admin():
+    bersihkan_layar()
+    _tampilkan_header("Jadwal", "UBAH JADWAL")
+    item = _pilih_satu_jadwal("Pilih jadwal yang ingin diubah:", hanya_aktif=True)
+    if item is None:
+        return
+    bidang = questionary.select(
+        f"Pilih bagian jadwal ID {item['id']} yang ingin diubah:",
+        choices=[
+            Choice("Program", "program_id"), Choice("Tutor", "tutor_id"),
+            Choice("Ruang", "room_id"), Choice("Hari", "hari"),
+            Choice("Jam mulai", "jam_mulai"), Choice("Jam selesai", "jam_selesai"),
+            Separator("────────────────────────"), Choice("Kembali", "kembali"),
+        ], style=TEMA_ADMIN, qmark="⚡", pointer="▶",
+    ).ask()
+    if bidang is None or bidang == "kembali":
+        return
+    data = {}
+    if bidang in {"program_id", "tutor_id", "room_id"}:
+        jenis = {"program_id": "program", "tutor_id": "tutor", "room_id": "ruang"}[bidang]
+        nilai = _ambil_opsi_jadwal(jenis, f"Pilih {jenis} yang baru:")
+        if nilai is None:
+            return
+        data[bidang] = nilai
+    elif bidang == "hari":
+        nilai = _pilih_hari_jadwal("Pilih hari yang baru:")
+        if nilai is None:
+            return
+        data[bidang] = nilai
+    else:
+        waktu_lama = item[bidang].strftime("%H:%M")
+        nilai = questionary.text(
+            f"{('Jam mulai' if bidang == 'jam_mulai' else 'Jam selesai')} baru (HH:MM):",
+            default=waktu_lama, style=TEMA_ADMIN,
+        ).ask()
+        if nilai is None:
+            return
+        data[bidang] = nilai
+    yakin = questionary.confirm("Simpan perubahan jadwal?", default=False, style=TEMA_ADMIN).ask()
+    if yakin is not True:
+        info("Perubahan jadwal dibatalkan.")
+        _tekan_enter()
+        return
+    berhasil, pesan = schedule_service.ubah_jadwal(item["id"], data)
+    sukses(pesan) if berhasil else gagal(pesan)
+    _tekan_enter()
+
+
+def _jadwal_nonaktifkan_admin():
+    bersihkan_layar()
+    _tampilkan_header("Jadwal", "NONAKTIFKAN JADWAL")
+    item = _pilih_satu_jadwal("Pilih jadwal yang akan dinonaktifkan:", hanya_aktif=True)
+    if item is None:
+        return
+    detail = (
+        f"{item['hari'].capitalize()} {item['jam_mulai'].strftime('%H:%M')}-"
+        f"{item['jam_selesai'].strftime('%H:%M')} • {item['nama_program']} • {item['nama_tutor']}"
+    )
+    yakin = questionary.confirm(
+        f"Nonaktifkan jadwal ID {item['id']}? {detail}. Riwayat pertemuan tidak dihapus.",
+        default=False, style=TEMA_ADMIN,
+    ).ask()
+    if yakin is not True:
+        info("Penonaktifan jadwal dibatalkan.")
+        _tekan_enter()
+        return
+    berhasil, pesan = schedule_service.nonaktifkan_jadwal(item["id"])
+    sukses(pesan) if berhasil else gagal(pesan)
+    _tekan_enter()
+
+
+def menu_jadwal_admin():
+    """Submenu jadwal admin menurut rancangan MENU_CLI.md."""
+    if not session.punya_role("admin"):
+        peringatan("Akses ditolak. Login sebagai admin terlebih dahulu.")
+        return
+    aksi = {
+        "lihat": _jadwal_lihat_admin,
+        "tambah": _jadwal_tambah_admin,
+        "ubah": _jadwal_ubah_admin,
+        "nonaktif": _jadwal_nonaktifkan_admin,
+    }
+    while session.punya_role("admin"):
+        bersihkan_layar()
+        _tampilkan_header("Jadwal", "MANAJEMEN JADWAL MENGAJAR")
+        pilihan = questionary.select(
+            "Pilih tindakan:",
+            choices=[
+                Choice("Lihat jadwal (per program / tutor / ruang / hari)", "lihat"),
+                Choice("Tambah jadwal", "tambah"), Choice("Ubah jadwal", "ubah"),
+                Choice("Nonaktifkan jadwal", "nonaktif"),
+                Separator("────────────────────────"), Choice("Kembali ke dashboard", "kembali"),
+            ], style=TEMA_ADMIN, qmark="⚡", pointer="▶",
+            instruction=" (Gunakan ↑/↓ lalu Enter)",
+        ).ask()
+        if pilihan is None or pilihan == "kembali":
+            return
+        fungsi = aksi.get(pilihan)
+        if fungsi:
+            fungsi()
+
+
 def _tabel_pendaftaran_admin(daftar):
     tabel = Table(title="Daftar Pendaftaran Program", header_style="bold cyan", border_style="blue", expand=True)
     tabel.add_column("ID", justify="right", no_wrap=True)
@@ -1324,6 +1612,9 @@ def jalankan():
             continue
         if pilihan == "tutor":
             menu_admin_data.menu_data_tutor_admin()
+            continue
+        if pilihan == "jadwal":
+            menu_jadwal_admin()
             continue
 
         label = next(
