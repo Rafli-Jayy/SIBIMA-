@@ -149,7 +149,8 @@ Angka di sebelah **Pusat Konfirmasi** adalah jumlah item yang menunggu persetuju
  ├─ Daftar tagihan (filter status)
  ├─ Daftar tunggakan
  ├─ Riwayat pembayaran
- ├─ Cetak bukti pembayaran (TXT)
+ ├─ Cetak / unduh bukti pembayaran (PDF)
+ ├─ Kirim bukti pembayaran ke email siswa
  └─ Kembali
 ```
 
@@ -335,7 +336,8 @@ Catatan: jenis nilai `kuis` tetap dapat diinput tutor secara manual; modul kuis 
  ├─ Tagihan saya (status)
  ├─ Bayar tagihan -> nomor Virtual Account -> "Saya sudah membayar"
  ├─ Riwayat pembayaran
- ├─ Lihat / cetak bukti pembayaran
+ ├─ Unduh bukti pembayaran (PDF)
+ ├─ Kirim bukti pembayaran ke email terdaftar
  └─ Kembali
 ```
 

@@ -11,6 +11,7 @@ from rich.text import Text
 from app import session
 from app.repositories import enrollment_repo, program_repo, user_repo
 from app.services import enrollment_service
+from app.ui import menu_pembayaran
 from app.ui.console import (
     bersihkan_layar,
     console,
@@ -617,7 +618,7 @@ def jalankan():
         elif pilihan == "nilai":
             _menu_fitur_belum_terhubung("Nilai dan Rapor", enrollments)
         elif pilihan == "pembayaran":
-            _menu_fitur_belum_terhubung("Tagihan dan Pembayaran", enrollments)
+            menu_pembayaran.menu_pembayaran_siswa()
         elif pilihan == "materi":
             _menu_fitur_belum_terhubung("Catatan Materi", enrollments)
         elif pilihan == "profil":

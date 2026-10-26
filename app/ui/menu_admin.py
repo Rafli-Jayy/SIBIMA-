@@ -10,7 +10,7 @@ from rich.table import Table
 from app import session
 from app.repositories import user_repo, enrollment_repo, program_repo
 from app.services import approval_service, program_service, admin_enrollment_service, schedule_service
-from app.ui import menu_admin_data
+from app.ui import menu_admin_data, menu_pembayaran
 from app.ui.console import (
     console,
     bersihkan_layar,
@@ -636,7 +636,7 @@ def menu_konfirmasi():
         elif pilihan == "enrollment":
             _menu_konfirmasi_enrollment()
         elif pilihan == "pembayaran":
-            _tampilkan_modul_belum_tersedia("Konfirmasi Pembayaran")
+            menu_pembayaran.menu_konfirmasi_pembayaran()
 
 def _tampilkan_modul_belum_tersedia(nama_modul: str):
     bersihkan_layar()
@@ -1615,6 +1615,9 @@ def jalankan():
             continue
         if pilihan == "jadwal":
             menu_jadwal_admin()
+            continue
+        if pilihan == "pembayaran":
+            menu_pembayaran.menu_pembayaran_admin()
             continue
 
         label = next(

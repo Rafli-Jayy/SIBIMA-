@@ -1,0 +1,22 @@
+# Database
+psycopg[binary,pool]>=3.2
+
+# Konfigurasi dan keamanan
+python-dotenv
+bcrypt
+
+# Tampilan dan interaksi CLI
+rich
+questionary
+
+# Validasi
+email-validator
+
+# PDF bukti pembayaran
+reportlab>=4.2
+
+# AI (Gemini)
+google-genai
+
+# Pengujian
+pytest

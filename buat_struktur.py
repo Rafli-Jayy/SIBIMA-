@@ -79,6 +79,9 @@ questionary
 # Validasi
 email-validator
 
+# PDF bukti pembayaran
+reportlab>=4.2
+
 # AI (Gemini)
 google-genai
 
