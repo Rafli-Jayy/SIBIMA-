@@ -272,7 +272,7 @@ Catatan: jenis nilai `kuis` tetap dapat diinput tutor secara manual; modul kuis 
 │  DASHBOARD SISWA          Halo, Budi Santoso │
 │  Jadwal hari ini : 15:00 UTBK Intensif (R-2) │
 │  Tagihan         : Rp 450.000 jatuh tempo 5/11│
-│  Pengumuman baru : 2                         │
+│  Pengumuman terbaru : 3 ditampilkan          │
 ╰──────────────────────────────────────────────╯
 ? Menu Siswa
  » Katalog Program

@@ -10,7 +10,9 @@ from rich.table import Table
 from app import session
 from app.repositories import user_repo, enrollment_repo, program_repo
 from app.services import approval_service, program_service, admin_enrollment_service, schedule_service
-from app.ui import menu_admin_data, menu_pembayaran
+from app.ui import (
+    menu_admin_data, menu_pembayaran, menu_admin_laporan, menu_admin_komunikasi,
+)
 from app.ui.console import (
     console,
     bersihkan_layar,
@@ -1618,6 +1620,15 @@ def jalankan():
             continue
         if pilihan == "pembayaran":
             menu_pembayaran.menu_pembayaran_admin()
+            continue
+        if pilihan == "laporan":
+            menu_admin_laporan.menu_laporan_admin()
+            continue
+        if pilihan == "pengumuman":
+            menu_admin_komunikasi.menu_pengumuman_admin()
+            continue
+        if pilihan == "log":
+            menu_admin_komunikasi.menu_log_aktivitas_admin()
             continue
 
         label = next(

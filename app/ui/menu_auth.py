@@ -24,19 +24,34 @@ tema_sibima = Style([
 ])
 
 def tampilkan_header(halaman="Utama"):
-    if halaman == "Utama":
-        judul = "S I B I M A"
-        sub = "S I S T E M   I N F O R M A S I   B I M B E L"
-    elif halaman == "Login":
-        judul = "L O G I N"
-        sub = "O T E N T I K A S I   P E N G G U N A"
-    elif halaman == "Register":
-        judul = "R E G I S T E R"
-        sub = "P E N D A F T A R A N   A K U N"
-    elif halaman == "Verifikasi OTP":
-        judul = "S I B I M A   K E C E"
-        sub = "V E R I F I K A S I   E M A I L"
-    
+    """Tampilkan header untuk semua halaman, termasuk halaman baru."""
+    header = {
+        "Utama": (
+            "S I B I M A",
+            "S I S T E M   I N F O R M A S I   B I M B E L",
+        ),
+        "Login": (
+            "L O G I N",
+            "O T E N T I K A S I   P E N G G U N A",
+        ),
+        "Register": (
+            "R E G I S T E R",
+            "P E N D A F T A R A N   A K U N",
+        ),
+        "Verifikasi OTP": (
+            "S I B I M A   K E C E",
+            "V E R I F I K A S I   E M A I L",
+        ),
+        "Ganti Password Sementara": (
+            "G A N T I   P A S S W O R D",
+            "P E R G A N T I A N   P A S S W O R D   W A J I B",
+        ),
+    }
+    judul, sub = header.get(
+        halaman,
+        (str(halaman).upper(), "S I S T E M   I N F O R M A S I   B I M B E L"),
+    )
+
     isi_teks = f"[bold cyan]{judul}[/bold cyan]\n[bold white]{sub}[/bold white]"
     
     panel = Panel(

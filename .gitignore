@@ -6,3 +6,6 @@ __pycache__/
 bukti/*
 !bukti/.gitkeep
 .vscode/
+
+# Laporan CSV hasil ekspor lokal
+laporan/

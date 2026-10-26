@@ -20,3 +20,6 @@ google-genai
 
 # Pengujian
 pytest
+
+# Ekspor laporan Excel berformat
+openpyxl>=3.1

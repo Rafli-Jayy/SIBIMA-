@@ -10,7 +10,7 @@ from rich.text import Text
 
 from app import session
 from app.repositories import enrollment_repo, program_repo, user_repo
-from app.services import enrollment_service
+from app.services import enrollment_service, engagement_service
 from app.ui import menu_pembayaran
 from app.ui.console import (
     bersihkan_layar,
@@ -130,6 +130,42 @@ def _tabel_pendaftaran(enrollments, judul="Kelas dan Status Pendaftaran"):
     console.print(tabel)
 
 
+def _tampilkan_pengumuman_terbaru():
+    """Tampilkan pengumuman global terbaru pada dashboard aktif siswa."""
+    try:
+        daftar = engagement_service.pengumuman_terbaru_siswa(limit=3)
+    except (psycopg.Error, PermissionError, ValueError):
+        peringatan("Pengumuman belum dapat dimuat saat ini.")
+        return
+    if not daftar:
+        return
+
+    isi = Text()
+    for index, item in enumerate(daftar):
+        if index:
+            isi.append("\n\n" + "─" * 46 + "\n\n", style="dim")
+        judul = str(item.get("judul") or "Tanpa judul")
+        isi.append(judul + "\n", style="bold cyan")
+        teks = " ".join(str(item.get("isi") or "").split())
+        if len(teks) > 220:
+            teks = teks[:217] + "..."
+        isi.append(teks or "(Tidak ada isi)", style="white")
+        created_at = item.get("created_at")
+        if created_at:
+            try:
+                waktu = created_at.strftime("%d %b %Y %H:%M")
+            except AttributeError:
+                waktu = str(created_at)
+            isi.append("\n" + waktu, style="dim")
+    console.print(Panel(
+        isi,
+        title="[bold cyan]PENGUMUMAN TERBARU[/bold cyan]",
+        border_style="cyan",
+        padding=(1, 2),
+        expand=True,
+    ))
+
+
 def _dashboard(pengguna, enrollments):
     bersihkan_layar()
     console.print(
@@ -197,6 +233,8 @@ def _dashboard(pengguna, enrollments):
                     expand=True,
                 )
             )
+
+    _tampilkan_pengumuman_terbaru()
 
 
 def menu_katalog(pengguna):
