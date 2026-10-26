@@ -3,12 +3,14 @@
 import psycopg
 
 from app import session
+from app.db import pool
 from app.repositories import (
     user_repo,
     profile_repo,
     enrollment_repo,
     engagement_repo,
     schedule_repo,
+    onboarding_repo,
 )
 from app.services import email_service
 
@@ -34,7 +36,7 @@ def _admin_aktif():
 
 
 def setujui_akun(user_id: int):
-    """Menyetujui akun siswa/tutor dan menerbitkan identitas profil atomik."""
+    """Setujui tutor; untuk siswa, setujui akun + paket + invoice atomik."""
     admin = _admin_aktif()
     if admin is None:
         return False, "Akses ditolak. Hanya admin aktif yang dapat menyetujui akun."
@@ -51,6 +53,64 @@ def setujui_akun(user_id: int):
     if target.get("status") != "menunggu_konfirmasi":
         return False, "Akun tidak sedang menunggu persetujuan."
 
+    if target["role"] == "siswa":
+        # Siswa wajib sudah memilih satu paket. Operasi akun, NIS, enrollment,
+        # dan invoice pertama dijalankan di satu transaksi database.
+        try:
+            hasil = onboarding_repo.setujui_siswa_dengan_paket(
+                user_id=target["id"],
+                approved_by=admin["id"],
+            )
+        except ValueError as exc:
+            return False, str(exc)
+        except (psycopg.Error, RuntimeError) as exc:
+            return False, (
+                "Persetujuan akun, paket, dan tagihan gagal; transaksi dibatalkan "
+                f"({type(exc).__name__}). Periksa database sebelum mencoba lagi."
+            )
+
+        invoice = hasil.get("invoice")
+        detail = (
+            f"NIS: {hasil['nis']}\n"
+            f"Program: {hasil['nama_program']} ({hasil['kode_program']})\n"
+            f"Jenjang: {hasil['jenjang']}"
+        )
+        if invoice:
+            detail += (
+                f"\nNo. invoice: {invoice['no_invoice']}"
+                f"\nTagihan pertama: {_format_rupiah(invoice['jumlah'])}"
+                f"\nPeriode: {invoice['periode'].strftime('%B %Y')}"
+                f"\nJatuh tempo: {invoice['jatuh_tempo'].strftime('%d-%m-%Y')}"
+            )
+            detail_pesan = (
+                f" Tagihan pertama {invoice['no_invoice']} sebesar "
+                f"{_format_rupiah(invoice['jumlah'])}, jatuh tempo "
+                f"{invoice['jatuh_tempo'].strftime('%d-%m-%Y')}."
+            )
+        else:
+            detail += "\nProgram gratis; tidak dibuat invoice bernilai nol."
+            detail_pesan = " Program gratis, tidak dibuat tagihan."
+
+        try:
+            terkirim = email_service.kirim_notifikasi_status(
+                email=hasil["email"],
+                nama=hasil["nama_lengkap"],
+                kategori="akun",
+                status="aktif",
+                detail=detail,
+            )
+        except Exception:
+            terkirim = False
+
+        pesan = (
+            f"Akun {hasil['username']} disetujui; NIS {hasil['nis']} diterbitkan, "
+            f"program {hasil['nama_program']} diaktifkan.{detail_pesan}"
+        )
+        if not terkirim:
+            return True, pesan + " Email notifikasi gagal dikirim."
+        return True, pesan + " Email pemberitahuan telah dikirim."
+
+    # Tutor tidak memilih paket; cukup persetujuan akun dan penerbitan kode tutor.
     try:
         profile_repo.proses_persetujuan_akun(
             user_id=target["id"],
@@ -60,10 +120,18 @@ def setujui_akun(user_id: int):
         terbaru = user_repo.cari_by_id(target["id"])
         if terbaru is None or terbaru.get("status") != "aktif":
             return False, "Persetujuan akun gagal diverifikasi di database."
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT kode_tutor FROM tutors WHERE user_id = %s",
+                    (target["id"],),
+                )
+                row = cur.fetchone()
+                kode_tutor = row[0] if row else None
     except ValueError as exc:
         return False, str(exc)
-    except psycopg.Error:
-        return False, "Terjadi kesalahan database saat menyetujui akun."
+    except psycopg.Error as exc:
+        return False, f"Terjadi kesalahan database saat menyetujui tutor ({type(exc).__name__})."
 
     try:
         terkirim = email_service.kirim_notifikasi_status(
@@ -71,20 +139,21 @@ def setujui_akun(user_id: int):
             nama=terbaru["nama_lengkap"],
             kategori="akun",
             status="aktif",
+            detail=f"Kode tutor: {kode_tutor}" if kode_tutor else None,
         )
     except Exception:
         terkirim = False
 
+    pesan = f"Akun tutor {terbaru['username']} berhasil disetujui."
+    if kode_tutor:
+        pesan += f" Kode tutor: {kode_tutor}."
     if not terkirim:
-        return True, "Akun berhasil disetujui, tetapi email notifikasi gagal dikirim."
-    return True, (
-        f"Akun {terbaru['username']} berhasil disetujui. "
-        "Email pemberitahuan telah dikirim."
-    )
+        return True, pesan + " Email notifikasi gagal dikirim."
+    return True, pesan + " Email pemberitahuan telah dikirim."
 
 
 def tolak_akun(user_id: int, alasan: str):
-    """Menolak akun siswa/tutor dan menyimpan alasan penolakan."""
+    """Tolak akun; untuk siswa, tolak juga paket menunggunya dalam satu transaksi."""
     admin = _admin_aktif()
     if admin is None:
         return False, "Akses ditolak. Hanya admin aktif yang dapat menolak akun."
@@ -105,19 +174,33 @@ def tolak_akun(user_id: int, alasan: str):
 
     alasan = alasan.strip()
     try:
-        profile_repo.proses_persetujuan_akun(
-            user_id=target["id"],
-            approved_by=admin["id"],
-            status="ditolak",
-            reject_reason=alasan,
-        )
-        terbaru = user_repo.cari_by_id(target["id"])
-        if terbaru is None or terbaru.get("status") != "ditolak":
-            return False, "Penolakan akun gagal diverifikasi di database."
+        if target["role"] == "siswa":
+            hasil = onboarding_repo.tolak_siswa_dan_paket(
+                user_id=target["id"],
+                approved_by=admin["id"],
+                alasan=alasan,
+            )
+            terbaru = user_repo.cari_by_id(target["id"])
+            if terbaru is None or terbaru.get("status") != "ditolak":
+                return False, "Penolakan akun gagal diverifikasi di database."
+            detail = alasan
+            if hasil.get("enrollment_ids"):
+                detail += "\nPendaftaran paket yang masih menunggu juga ditolak."
+        else:
+            profile_repo.proses_persetujuan_akun(
+                user_id=target["id"],
+                approved_by=admin["id"],
+                status="ditolak",
+                reject_reason=alasan,
+            )
+            terbaru = user_repo.cari_by_id(target["id"])
+            if terbaru is None or terbaru.get("status") != "ditolak":
+                return False, "Penolakan akun gagal diverifikasi di database."
+            detail = alasan
     except ValueError as exc:
         return False, str(exc)
-    except psycopg.Error:
-        return False, "Terjadi kesalahan database saat menolak akun."
+    except psycopg.Error as exc:
+        return False, f"Terjadi kesalahan database saat menolak akun ({type(exc).__name__})."
 
     try:
         terkirim = email_service.kirim_notifikasi_status(
@@ -125,14 +208,17 @@ def tolak_akun(user_id: int, alasan: str):
             nama=terbaru["nama_lengkap"],
             kategori="akun",
             status="ditolak",
-            detail=alasan,
+            detail=detail,
         )
     except Exception:
         terkirim = False
 
+    pesan = f"Akun {terbaru['username']} berhasil ditolak."
+    if target["role"] == "siswa":
+        pesan += " Pendaftaran paket yang masih menunggu juga ditolak."
     if not terkirim:
-        return True, "Akun berhasil ditolak dan alasan tersimpan, tetapi email notifikasi gagal dikirim."
-    return True, f"Akun {terbaru['username']} berhasil ditolak. Email pemberitahuan telah dikirim."
+        return True, pesan + " Email notifikasi gagal dikirim."
+    return True, pesan + " Email pemberitahuan telah dikirim."
 
 
 def _enrollment_menunggu(enrollment_id: int):

@@ -9,7 +9,7 @@ from rich.table import Table
 from rich.text import Text
 
 from app import session
-from app.repositories import enrollment_repo, program_repo
+from app.repositories import enrollment_repo, program_repo, user_repo
 from app.services import enrollment_service
 from app.ui.console import (
     bersihkan_layar,
@@ -384,12 +384,187 @@ def _menu_fitur_belum_terhubung(nama, enrollments):
     _jeda()
 
 
+def _jalankan_onboarding(pengguna):
+    """Alur terbatas untuk siswa terverifikasi yang belum disetujui admin."""
+    student_id = pengguna["id"]
+
+    while True:
+        # Segarkan status dari database supaya sesi yang sedang menunggu bisa
+        # langsung melanjutkan ke dashboard normal setelah admin menyetujui.
+        try:
+            terbaru = user_repo.cari_by_id(student_id)
+            if terbaru is None or terbaru.get("role") != "siswa":
+                session.logout()
+                gagal("Akun siswa tidak ditemukan. Sesi telah ditutup.")
+                _jeda()
+                return False
+            session.set_user(terbaru)
+            pengguna = terbaru
+
+            if terbaru.get("status") == "aktif":
+                return True
+            if terbaru.get("status") in {"ditolak", "nonaktif"}:
+                alasan = terbaru.get("reject_reason") or "Tidak ada keterangan tambahan."
+                bersihkan_layar()
+                console.print(
+                    Panel(
+                        f"[bold red]Akun tidak dapat digunakan.[/bold red]\n\n{alasan}",
+                        title="STATUS AKUN",
+                        border_style="red",
+                        padding=(1, 3),
+                        expand=True,
+                    )
+                )
+                session.logout()
+                _jeda("Tekan Enter untuk kembali ke menu utama...")
+                return False
+            if not terbaru.get("email_verified"):
+                session.logout()
+                gagal("Email belum diverifikasi. Silakan verifikasi terlebih dahulu.")
+                _jeda()
+                return False
+
+            enrollments = enrollment_repo.enrollment_siswa(student_id)
+        except psycopg.Error as exc:
+            bersihkan_layar()
+            gagal(f"Gagal memeriksa status onboarding ({type(exc).__name__}).")
+            _jeda()
+            return False
+
+        menunggu = [item for item in enrollments if item.get("status") == "menunggu"]
+        aktif = [item for item in enrollments if item.get("status") == "aktif"]
+
+        bersihkan_layar()
+        console.print(
+            Panel(
+                "[bold cyan]S I B I M A[/bold cyan]\n"
+                "[bold white]PENYELESAIAN PENDAFTARAN SISWA[/bold white]",
+                border_style="cyan",
+                padding=(1, 4),
+                expand=True,
+            )
+        )
+        console.print(
+            Panel(
+                f"[bold white]Halo, [cyan]{pengguna.get('nama_lengkap', pengguna.get('username', 'Siswa'))}[/cyan]![/bold white]\n\n"
+                "Akunmu sudah terverifikasi, tetapi belum disetujui admin.\n"
+                "Selesaikan pemilihan satu paket bimbel. Setelah itu admin akan "
+                "memeriksa akun dan paketmu sekaligus.",
+                title="ONBOARDING WAJIB",
+                border_style="bright_blue",
+                padding=(1, 2),
+                expand=True,
+            )
+        )
+
+        if menunggu:
+            _tabel_pendaftaran(menunggu, judul="Paket yang Menunggu Persetujuan")
+            console.print(
+                Panel(
+                    "[bold yellow]Pilihan paket sudah diterima.[/bold yellow]\n"
+                    "Akun, paket, dan tagihan pertama akan diproses bersama oleh admin.\n"
+                    "Gunakan Muat Ulang Status untuk memeriksa apakah keputusan sudah dibuat.",
+                    border_style="yellow",
+                    padding=(1, 2),
+                    expand=True,
+                )
+            )
+            pilihan = questionary.select(
+                "Tindakan:",
+                choices=[
+                    Choice("↻  Muat ulang status", value="refresh"),
+                    Choice("🚪  Logout", value="logout"),
+                ],
+                style=GAYA_SIBIMA,
+                qmark="⚡",
+                pointer="▶",
+                instruction=" (Gunakan ↑/↓ lalu Enter)",
+            ).ask()
+            if pilihan is None or pilihan == "logout":
+                session.logout()
+                sukses("Logout siswa berhasil. Sesi telah ditutup.")
+                _jeda("Tekan Enter untuk kembali ke menu utama...")
+                return False
+            continue
+
+        if aktif:
+            # Kondisi tak normal: akun masih menunggu, tetapi ada enrollment aktif.
+            # Jangan izinkan memilih paket lagi; minta admin memeriksa konsistensi data.
+            _tabel_pendaftaran(aktif, judul="Pendaftaran Aktif yang Perlu Diperiksa")
+            peringatan(
+                "Akun masih berstatus menunggu, tetapi sudah memiliki pendaftaran aktif. "
+                "Hubungi admin untuk memeriksa konsistensi data."
+            )
+            pilihan = questionary.select(
+                "Tindakan:",
+                choices=[
+                    Choice("↻  Muat ulang status", value="refresh"),
+                    Choice("🚪  Logout", value="logout"),
+                ],
+                style=GAYA_SIBIMA,
+                qmark="⚡",
+                pointer="▶",
+            ).ask()
+            if pilihan is None or pilihan == "logout":
+                session.logout()
+                sukses("Logout siswa berhasil. Sesi telah ditutup.")
+                _jeda("Tekan Enter untuk kembali ke menu utama...")
+                return False
+            continue
+
+        console.print(
+            Panel(
+                "Kamu belum memilih paket bimbel.\n\n"
+                "Buka katalog, pilih satu program, lalu konfirmasikan pilihan. "
+                "Sebelum admin menyetujui akunmu, fitur kelas lainnya belum tersedia.",
+                title="PILIH PAKET BIMBEL",
+                border_style="cyan",
+                padding=(1, 3),
+                expand=True,
+            )
+        )
+        pilihan = questionary.select(
+            "Langkah berikutnya:",
+            choices=[
+                Choice("🎓  Pilih paket bimbel sekarang", value="katalog"),
+                Choice("🚪  Logout", value="logout"),
+            ],
+            style=GAYA_SIBIMA,
+            qmark="⚡",
+            pointer="▶",
+            instruction=" (Gunakan ↑/↓ lalu Enter)",
+        ).ask()
+
+        if pilihan is None or pilihan == "logout":
+            session.logout()
+            sukses("Logout siswa berhasil. Sesi telah ditutup.")
+            _jeda("Tekan Enter untuk kembali ke menu utama...")
+            return False
+
+        menu_katalog(pengguna)
+        # Setelah menu katalog kembali, ulangi pemeriksaan DB dan status.
+
+
 def jalankan():
-    """Titik masuk dashboard siswa."""
+    """Dashboard siswa; akun pending wajib menyelesaikan onboarding paket dulu."""
     while True:
         pengguna = _pengguna_siswa()
         if pengguna is None:
             gagal("Sesi siswa tidak valid. Silakan login kembali.")
+            session.logout()
+            _jeda()
+            return
+
+        # Siswa boleh login sebelum approval hanya untuk memilih satu paket
+        # atau memeriksa status persetujuan. Tidak melihat menu belajar normal.
+        if pengguna.get("status") == "menunggu_konfirmasi":
+            lanjut_dashboard = _jalankan_onboarding(pengguna)
+            if not lanjut_dashboard:
+                return
+            continue
+
+        if pengguna.get("status") != "aktif":
+            gagal("Akun siswa belum aktif. Silakan periksa status pendaftaran.")
             session.logout()
             _jeda()
             return
@@ -403,7 +578,6 @@ def jalankan():
             return
 
         _dashboard(pengguna, enrollments)
-
         pilihan = questionary.select(
             "Apa yang ingin kamu lakukan?",
             choices=[

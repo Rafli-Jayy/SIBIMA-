@@ -3,6 +3,7 @@
 from psycopg.rows import dict_row
 
 from app.db import pool
+from app.repositories.billing_repo import buat_invoice_awal
 
 
 STATUS_ENROLLMENT_VALID = {
@@ -137,6 +138,7 @@ def daftar_menunggu():
                 JOIN users AS u ON u.id = s.user_id
                 JOIN programs AS p ON p.id = e.program_id
                 WHERE e.status = 'menunggu'
+                  AND u.status = 'aktif'
                 ORDER BY e.created_at ASC, e.id ASC;
                 """
             )
@@ -379,48 +381,12 @@ def proses_keputusan_admin(
                         "pesan": "Pendaftaran sudah diproses oleh admin lain.",
                     }
 
-                invoice = None
                 jumlah = enrollment["harga_bulanan"]
-                if jumlah > 0:
-                    # Unik enrollment + periode mencegah invoice pertama ganda.
-                    cur.execute(
-                        """
-                        INSERT INTO invoices (
-                            enrollment_id, periode, jumlah,
-                            diskon_persen, jatuh_tempo, status
-                        )
-                        VALUES (
-                            %s,
-                            date_trunc('month', CURRENT_DATE)::date,
-                            %s,
-                            0,
-                            CURRENT_DATE + 7,
-                            'belum_dibayar'
-                        )
-                        ON CONFLICT (enrollment_id, periode) DO NOTHING
-                        RETURNING id, no_invoice, periode, jumlah,
-                                  diskon_persen, jatuh_tempo, status;
-                        """,
-                        (enrollment_id, jumlah),
-                    )
-                    invoice = cur.fetchone()
-                    if invoice is None:
-                        cur.execute(
-                            """
-                            SELECT id, no_invoice, periode, jumlah,
-                                   diskon_persen, jatuh_tempo, status
-                            FROM invoices
-                            WHERE enrollment_id = %s
-                              AND periode = date_trunc('month', CURRENT_DATE)::date;
-                            """,
-                            (enrollment_id,),
-                        )
-                        invoice = cur.fetchone()
-                    if invoice is None:
-                        # Exception membatalkan update enrollment di transaksi ini.
-                        raise RuntimeError(
-                            "Invoice pertama tidak dapat dibuat atau ditemukan."
-                        )
+                invoice = buat_invoice_awal(
+                    cur=cur,
+                    enrollment_id=enrollment_id,
+                    jumlah=jumlah,
+                )
 
                 hasil = {
                     "berhasil": True,

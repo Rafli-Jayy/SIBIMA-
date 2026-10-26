@@ -70,6 +70,15 @@ def _tampilkan_header(halaman: str, subtitle: str):
     )
 
 
+def _paket_menunggu_siswa(user_id: int):
+    """Ambil paket yang masih menunggu untuk satu calon siswa."""
+    try:
+        riwayat = enrollment_repo.enrollment_siswa(user_id)
+    except psycopg.Error:
+        return None
+    return [item for item in riwayat if item.get("status") == "menunggu"]
+
+
 def _tampilkan_detail_akun(user: dict):
     tabel = Table(show_header=False, box=None, padding=(0, 1), expand=True)
     tabel.add_column("Informasi", style="cyan", width=22)
@@ -96,6 +105,50 @@ def _tampilkan_detail_akun(user: dict):
             expand=True,
         )
     )
+
+    if user.get("role") == "siswa":
+        paket_menunggu = _paket_menunggu_siswa(user["id"])
+        if paket_menunggu is None:
+            peringatan("Detail pilihan paket belum dapat dibaca dari database.")
+        elif len(paket_menunggu) == 1:
+            paket = paket_menunggu[0]
+            console.print(
+                Panel(
+                    f"[bold]{paket.get('nama_program', '-')}[/bold] "
+                    f"([cyan]{paket.get('kode_program', '-')}[/cyan])\n"
+                    f"Jenjang: {paket.get('jenjang', '-')}\n"
+                    f"Biaya per bulan: {_format_rupiah(paket.get('harga_bulanan', 0))}\n"
+                    "[dim]Jika akun disetujui, paket ini ikut diaktifkan dan "
+                    "tagihan pertama dibuat dalam transaksi yang sama.[/dim]",
+                    title="[bold cyan]PAKET PILIHAN SISWA[/bold cyan]",
+                    border_style="cyan",
+                    padding=(1, 2),
+                    expand=True,
+                )
+            )
+        elif not paket_menunggu:
+            console.print(
+                Panel(
+                    "[bold yellow]Siswa belum memilih paket bimbel.[/bold yellow]\n"
+                    "Akun siswa belum dapat disetujui. Minta siswa login dan "
+                    "memilih satu paket terlebih dahulu.",
+                    title="[bold yellow]PAKET BELUM DIPILIH[/bold yellow]",
+                    border_style="yellow",
+                    padding=(1, 2),
+                    expand=True,
+                )
+            )
+        else:
+            console.print(
+                Panel(
+                    f"[bold red]Ditemukan {len(paket_menunggu)} paket yang masih menunggu.[/bold red]\n"
+                    "Persetujuan dinonaktifkan sampai antrean paket siswa dirapikan.",
+                    title="[bold red]PERIKSA DATA[/bold red]",
+                    border_style="red",
+                    padding=(1, 2),
+                    expand=True,
+                )
+            )
 
 
 def _daftar_akun_menunggu():
@@ -147,14 +200,39 @@ def _proses_aksi_akun(user: dict):
                 "oleh service sampai verifikasi selesai."
             )
 
+        paket_menunggu = (
+            _paket_menunggu_siswa(user["id"])
+            if user.get("role") == "siswa"
+            else []
+        )
+        boleh_setujui = (
+            user.get("role") == "tutor"
+            or (paket_menunggu is not None and len(paket_menunggu) == 1)
+        )
+        opsi_aksi = []
+        if boleh_setujui:
+            label_setuju = (
+                "✓  Setujui akun + paket + tagihan pertama"
+                if user.get("role") == "siswa"
+                else "✓  Setujui akun dan terbitkan kode tutor"
+            )
+            opsi_aksi.append(Choice(label_setuju, value="setujui"))
+        elif user.get("role") == "siswa":
+            opsi_aksi.append(
+                Choice(
+                    "⚠  Paket belum dipilih / data paket perlu diperiksa",
+                    value="paket_kosong",
+                )
+            )
+        opsi_aksi.extend([
+            Choice("✕  Tolak akun", value="tolak"),
+            Separator("────────────────────────"),
+            Choice("↩  Kembali ke daftar", value="kembali"),
+        ])
+
         aksi = questionary.select(
             "Tindakan untuk akun ini:",
-            choices=[
-                Choice("✓  Setujui akun", value="setujui"),
-                Choice("✕  Tolak akun", value="tolak"),
-                Separator("────────────────────────"),
-                Choice("↩  Kembali ke daftar", value="kembali"),
-            ],
+            choices=opsi_aksi,
             style=TEMA_ADMIN,
             qmark="⚡",
             pointer="▶",
@@ -164,9 +242,22 @@ def _proses_aksi_akun(user: dict):
         if aksi is None or aksi == "kembali":
             return
 
+        if aksi == "paket_kosong":
+            peringatan(
+                "Siswa harus memilih tepat satu paket yang masih menunggu. "
+                "Setujui akun belum dapat dilakukan."
+            )
+            input("Tekan Enter untuk kembali ke detail...")
+            continue
+
         if aksi == "setujui":
+            deskripsi_aksi = (
+                "akun, paket bimbel, dan tagihan pertama"
+                if user.get("role") == "siswa"
+                else "akun tutor dan kode tutornya"
+            )
             yakin = questionary.confirm(
-                f"Setujui akun {user.get('username')}?",
+                f"Setujui {deskripsi_aksi} untuk {user.get('username')}?",
                 default=False,
                 style=TEMA_ADMIN,
             ).ask()
@@ -232,8 +323,9 @@ def _menu_konfirmasi_akun():
             Panel(
                 "[white]Pilih pendaftar untuk melihat detail, lalu setujui "
                 "atau tolak dengan alasan.[/white]\n\n"
-                "[dim]Pada antrean ini hanya akun siswa/tutor yang diproses. Email wajib "
-                "sudah terverifikasi sebelum akun disetujui.[/dim]",
+                "[dim]Tutor disetujui bersama penerbitan kode tutor. Siswa wajib memilih "
+                "tepat satu paket; persetujuan akun siswa sekaligus mengaktifkan paket "
+                "dan membuat tagihan pertama. Email harus sudah terverifikasi.[/dim]",
                 border_style="blue",
                 padding=(1, 2),
                 expand=True,

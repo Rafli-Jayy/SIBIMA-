@@ -1,12 +1,3 @@
-"""Register, login, ganti dan reset password.
-
-Fungsi yang direncanakan:
-    - register(role, data)
-    - login(username, password)
-    - ganti_password
-    - reset_password
-"""
-
 """Logika bisnis autentikasi SIBIMA."""
 
 from datetime import datetime, timezone
@@ -18,46 +9,32 @@ from app.utils.exceptions import DataTidakValid
 from app.services import otp_service
 
 
-
 ROLE_REGISTRASI = {"siswa", "tutor"}
 
 
 def register(role: str, data: dict):
     """Membuat akun siswa/tutor dan memulai verifikasi OTP."""
-    if role not in {"siswa", "tutor"}:
+    if role not in ROLE_REGISTRASI:
         return False, "Pendaftaran hanya tersedia untuk siswa dan tutor."
 
     try:
-        username = validators.validasi_username(
-            data.get("username", "")
-        )
-        email = validators.validasi_email(
-            data.get("email", "")
-        )
-        password = validators.validasi_password(
-            data.get("password", "")
-        )
+        username = validators.validasi_username(data.get("username", ""))
+        email = validators.validasi_email(data.get("email", ""))
+        password = validators.validasi_password(data.get("password", ""))
 
         nama_lengkap = data.get("nama_lengkap", "")
-
         if not isinstance(nama_lengkap, str):
             raise DataTidakValid("Nama lengkap harus berupa teks.")
 
         nama_lengkap = nama_lengkap.strip()
-
         if not nama_lengkap:
             raise DataTidakValid("Nama lengkap wajib diisi.")
-
         if len(nama_lengkap) > 100:
-            raise DataTidakValid(
-                "Nama lengkap maksimal 100 karakter."
-            )
-
+            raise DataTidakValid("Nama lengkap maksimal 100 karakter.")
         if len(email) > 120:
             raise DataTidakValid("Email maksimal 120 karakter.")
 
         password_hash = security.hash_password(password)
-
     except (DataTidakValid, ValueError) as exc:
         return False, str(exc)
 
@@ -68,35 +45,23 @@ def register(role: str, data: dict):
         password_hash=password_hash,
         role=role,
     )
-
     if user_id is None:
         return False, "Username atau email sudah terdaftar."
 
-    # Akun sudah dibuat. Sekarang coba kirim OTP.
     try:
-        otp_berhasil, pesan_otp = otp_service.kirim_otp(
-            user_id,
-            "register",
-        )
+        otp_berhasil, pesan_otp = otp_service.kirim_otp(user_id, "register")
     except Exception as exc:
-        # Akun sudah tersimpan, jadi jangan menganggap
-        # seluruh proses pendaftaran gagal.
         otp_berhasil = False
-        pesan_otp = (
-            "OTP belum dapat diproses. "
-            f"Jenis error: {type(exc).__name__}."
-        )
+        pesan_otp = f"OTP belum dapat diproses. Jenis error: {type(exc).__name__}."
 
     if otp_berhasil:
-        return True, (
-            "Akun berhasil dibuat. "
-            f"{pesan_otp}"
-        )
+        return True, f"Akun berhasil dibuat. {pesan_otp}"
 
     return True, (
         "Akun berhasil dibuat, tetapi OTP belum berhasil dikirim. "
         f"{pesan_otp} Pilih menu kirim ulang OTP untuk mencoba lagi."
     )
+
 
 def kirim_ulang_otp_registrasi(username: str):
     """Mengirim ulang OTP untuk akun yang belum diverifikasi."""
@@ -106,13 +71,10 @@ def kirim_ulang_otp_registrasi(username: str):
         return False, str(exc)
 
     user = user_repo.cari_by_username(username)
-
     if user is None:
         return False, "Akun tidak ditemukan."
-
     if user["email_verified"]:
         return False, "Email akun ini sudah terverifikasi."
-
     if user["status"] in {"ditolak", "nonaktif"}:
         return False, "Akun ini tidak dapat melanjutkan verifikasi."
 
@@ -127,24 +89,32 @@ def verifikasi_otp_registrasi(username: str, kode: str):
         return False, str(exc)
 
     user = user_repo.cari_by_username(username)
-
     if user is None:
         return False, "Akun tidak ditemukan."
-
     if user["email_verified"]:
         return False, "Email akun ini sudah terverifikasi."
-
     if user["status"] in {"ditolak", "nonaktif"}:
         return False, "Akun ini tidak dapat melanjutkan verifikasi."
 
-    return otp_service.verifikasi_otp(
-        user["id"],
-        kode,
-        "register",
-    )
+    return otp_service.verifikasi_otp(user["id"], kode, "register")
+
+
+def _waktu_sisa_kunci(locked_until) -> str:
+    """Membuat label waktu penguncian yang aman untuk ditampilkan."""
+    waktu = locked_until
+    if waktu.tzinfo is None:
+        waktu = waktu.replace(tzinfo=timezone.utc)
+    return waktu.strftime("%H:%M:%S %Z") or waktu.isoformat()
+
 
 def login(username: str, password: str):
-    """Memvalidasi login, status akun, dan batas percobaan login."""
+    """Login dan batasi akses akun siswa yang belum disetujui.
+
+    Siswa yang emailnya sudah diverifikasi tetapi akun masih menunggu admin
+    boleh login hanya agar bisa memilih paket. menu_siswa.jalankan() membatasi
+    akun tersebut ke alur onboarding sampai admin menyetujui akun + program.
+    Tutor yang menunggu persetujuan tetap tidak dapat login.
+    """
     try:
         username = validators.validasi_username(username)
     except DataTidakValid as exc:
@@ -154,84 +124,79 @@ def login(username: str, password: str):
         return False, "Username dan password wajib diisi."
 
     user = user_repo.cari_by_username(username)
-
     if user is None:
         return False, "Username atau password salah."
 
-    # 1. Periksa status akun.
-    if user["status"] == "nonaktif":
-        return False, "Akun Anda telah dinonaktifkan."
-
-    if user["status"] == "ditolak":
-        alasan = user.get("reject_reason") or "-"
-        return False, f"Pendaftaran ditolak. Alasan: {alasan}"
-
-    if not user["email_verified"] or user["status"] == "belum_verifikasi":
-        return False, "Email belum diverifikasi. Selesaikan verifikasi terlebih dahulu."
-
-    if user["status"] == "menunggu_konfirmasi":
-        return False, "Email terverifikasi. Akun masih menunggu persetujuan admin."
-
-    if user["status"] != "aktif":
-        return False, "Akun belum dapat digunakan. Hubungi administrator."
-
-    # 2. Periksa apakah akun sedang dikunci.
+    # Periksa lockout dan password sebelum memberikan pesan status akun.
     locked_until = user.get("locked_until")
     sekarang = datetime.now(timezone.utc)
-
     if locked_until is not None:
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
         if locked_until > sekarang:
-            waktu = locked_until.strftime("%H:%M:%S UTC")
             return False, (
-                "Akun dikunci sementara karena terlalu banyak "
-                f"percobaan login gagal. Coba lagi setelah {waktu}."
+                "Akun dikunci sementara karena terlalu banyak percobaan "
+                f"login gagal. Coba lagi setelah {_waktu_sisa_kunci(locked_until)}."
             )
-
-        # Masa penguncian sudah berakhir.
         user_repo.reset_lock_kedaluwarsa(user["id"])
+        user = user_repo.cari_by_id(user["id"])
+        if user is None:
+            return False, "Data pengguna tidak dapat dimuat kembali."
 
-    # 3. Periksa password.
-    if not security.verifikasi_password(
-        password,
-        user["password_hash"],
-    ):
+    if not security.verifikasi_password(password, user["password_hash"]):
         hasil = user_repo.catat_gagal_login(
             user["id"],
             max_attempts=MAX_LOGIN_ATTEMPTS,
             lock_minutes=LOCK_MINUTES,
         )
-
         if hasil is None:
             return False, "Gagal memperbarui status percobaan login."
 
-        if hasil["locked_until"] is not None:
-            if hasil["locked_until"] > datetime.now(timezone.utc):
+        locked = hasil.get("locked_until")
+        if locked is not None:
+            if locked.tzinfo is None:
+                locked = locked.replace(tzinfo=timezone.utc)
+            if locked > datetime.now(timezone.utc):
                 return False, (
                     "Terlalu banyak percobaan login gagal. "
                     f"Akun dikunci selama {LOCK_MINUTES} menit."
                 )
 
-        sisa = max(
-            0,
-            MAX_LOGIN_ATTEMPTS - hasil["failed_attempts"],
-        )
-
+        sisa = max(0, MAX_LOGIN_ATTEMPTS - hasil["failed_attempts"])
         return False, (
             "Username atau password salah. "
             f"Sisa percobaan sebelum penguncian: {sisa}."
         )
 
-    # 4. Reset kegagalan dan catat login berhasil.
+    # Password benar. Status diperiksa sesudah kredensial supaya akun yang
+    # menunggu tidak bisa memakai login tanpa password yang benar.
+    if not user.get("email_verified") or user.get("status") == "belum_verifikasi":
+        return False, "Email belum diverifikasi. Selesaikan verifikasi terlebih dahulu."
+    if user.get("status") == "ditolak":
+        alasan = user.get("reject_reason") or "-"
+        return False, f"Pendaftaran ditolak. Alasan: {alasan}"
+    if user.get("status") == "nonaktif":
+        return False, "Akun Anda telah dinonaktifkan."
+
+    if user.get("status") == "menunggu_konfirmasi":
+        if user.get("role") == "siswa":
+            # Login terbatas; menu siswa wajib memaksa pemilihan paket.
+            user_repo.reset_gagal_login(user["id"])
+            terbaru = user_repo.cari_by_id(user["id"])
+            if terbaru is None:
+                return False, "Data pengguna tidak dapat dimuat kembali."
+            return True, terbaru
+        return False, "Email terverifikasi. Akun tutor masih menunggu persetujuan admin."
+
+    if user.get("status") != "aktif":
+        return False, "Akun belum dapat digunakan. Hubungi administrator."
+
     user_repo.reset_gagal_login(user["id"])
-
-    # Ambil data terbaru dari database agar last_login dan
-    # failed_attempts yang dikembalikan tidak kedaluwarsa.
-    user = user_repo.cari_by_id(user["id"])
-
-    if user is None:
+    terbaru = user_repo.cari_by_id(user["id"])
+    if terbaru is None:
         return False, "Data pengguna tidak dapat dimuat kembali."
 
-    return True, user
+    return True, terbaru
 
 
 def ganti_password(
@@ -241,14 +206,9 @@ def ganti_password(
 ):
     """Mengganti password setelah password lama diverifikasi."""
     user = user_repo.cari_by_id(user_id)
-
     if user is None:
         return False, "Pengguna tidak ditemukan."
-
-    if not security.verifikasi_password(
-        password_lama,
-        user["password_hash"],
-    ):
+    if not security.verifikasi_password(password_lama, user["password_hash"]):
         return False, "Password lama tidak sesuai."
 
     try:
@@ -258,19 +218,12 @@ def ganti_password(
         return False, str(exc)
 
     user_repo.set_password(user_id, hash_baru)
-
     return True, "Password berhasil diperbarui."
 
 
 def reset_password(user_id: int, password_baru: str):
-    """
-    Mengatur ulang password.
-
-    Panggil fungsi ini hanya setelah proses OTP berhasil diverifikasi.
-    Fungsi ini sendiri tidak memverifikasi OTP.
-    """
+    """Mengatur ulang password; pemanggil wajib telah memverifikasi OTP."""
     user = user_repo.cari_by_id(user_id)
-
     if user is None:
         return False, "Pengguna tidak ditemukan."
 
@@ -281,5 +234,4 @@ def reset_password(user_id: int, password_baru: str):
         return False, str(exc)
 
     user_repo.set_password(user_id, hash_baru)
-
     return True, "Password berhasil di-reset."
