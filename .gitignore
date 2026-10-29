@@ -12,3 +12,6 @@ laporan/
 
 # Rapor TXT lokal siswa
 rapor/
+
+# Invoice PDF yang berisi data pribadi siswa
+/tagihan/

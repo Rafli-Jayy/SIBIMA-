@@ -6,9 +6,10 @@ from questionary import Choice, Separator, Style
 from rich.align import Align
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from app import session
-from app.repositories import user_repo, enrollment_repo, program_repo
+from app.repositories import user_repo, enrollment_repo, program_repo, profile_repo
 from app.services import approval_service, program_service, admin_enrollment_service, schedule_service
 from app.ui import (
     menu_admin_data, menu_pembayaran, menu_admin_laporan, menu_admin_komunikasi,
@@ -84,26 +85,58 @@ def _paket_menunggu_siswa(user_id: int):
 
 
 def _tampilkan_detail_akun(user: dict):
+    """Tampilkan identitas, profil, keamanan, dan dampak keputusan akun."""
+    try:
+        detail = profile_repo.detail_pengguna_persetujuan(user["id"]) or user
+    except (psycopg.Error, ValueError):
+        detail = user
+        peringatan("Detail profil lengkap tidak berhasil diambil; data dasar akun ditampilkan.")
+
+    def cell(value, default="-"):
+        text = str(value if value is not None and str(value).strip() else default)
+        return Text(text)
+
     tabel = Table(show_header=False, box=None, padding=(0, 1), expand=True)
-    tabel.add_column("Informasi", style="cyan", width=22)
+    tabel.add_column("Informasi", style="cyan", width=25, no_wrap=False)
     tabel.add_column("Nilai", style="white", overflow="fold")
 
-    tabel.add_row("ID pengguna", str(user.get("id", "-")))
-    tabel.add_row("Nama lengkap", str(user.get("nama_lengkap") or "-"))
-    tabel.add_row("Username", str(user.get("username") or "-"))
-    tabel.add_row("Email", str(user.get("email") or "-"))
-    tabel.add_row("Role", str(user.get("role") or "-").upper())
-    tabel.add_row(
-        "Email terverifikasi",
-        "Ya" if user.get("email_verified") else "Tidak",
-    )
-    tabel.add_row("Status akun", str(user.get("status") or "-"))
-    tabel.add_row("Didaftarkan", _format_waktu(user.get("created_at")))
+    dasar = [
+        ("ID pengguna", detail.get("id")),
+        ("Nama lengkap", detail.get("nama_lengkap")),
+        ("Username", detail.get("username")),
+        ("Email", detail.get("email")),
+        ("Role", str(detail.get("role") or "-").upper()),
+        ("Email terverifikasi", "Ya" if detail.get("email_verified") else "Belum"),
+        ("Status akun", detail.get("status")),
+        ("Tanggal registrasi", _format_waktu(detail.get("created_at"))),
+        ("Login terakhir", _format_waktu(detail.get("last_login"))),
+        ("Percobaan login gagal", detail.get("failed_attempts", 0)),
+        ("Akun terkunci sampai", _format_waktu(detail.get("locked_until")) if detail.get("locked_until") else "Tidak terkunci"),
+        ("Wajib ganti password", "Ya" if detail.get("must_change_password") else "Tidak"),
+    ]
+    for label, value in dasar:
+        tabel.add_row(label, cell(value))
+
+    if detail.get("role") == "siswa":
+        tabel.add_section()
+        tabel.add_row("NIS", cell(detail.get("nis"), "Diterbitkan saat akun disetujui"))
+        tabel.add_row("Jenjang", cell(detail.get("jenjang")))
+        tabel.add_row("Sekolah", cell(detail.get("sekolah")))
+        tabel.add_row("Nomor HP", cell(detail.get("student_no_hp")))
+        tabel.add_row("Nama wali", cell(detail.get("nama_wali")))
+    elif detail.get("role") == "tutor":
+        tabel.add_section()
+        tabel.add_row("Kode tutor", cell(detail.get("kode_tutor"), "Diterbitkan saat akun disetujui"))
+        tabel.add_row("Keahlian", cell(detail.get("keahlian")))
+        tabel.add_row("Nomor HP", cell(detail.get("tutor_no_hp")))
+
+    if detail.get("reject_reason"):
+        tabel.add_row("Alasan penolakan sebelumnya", cell(detail.get("reject_reason")))
 
     console.print(
         Panel(
             tabel,
-            title="[bold cyan]DETAIL PENDAFTAR[/bold cyan]",
+            title="[bold cyan]DETAIL AKUN & PROFIL PENDAFTAR[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
             expand=True,
@@ -111,25 +144,26 @@ def _tampilkan_detail_akun(user: dict):
     )
 
     if user.get("role") == "siswa":
+        console.print(
+            Panel(
+                "[bold]Jika akun disetujui:[/bold] akun menjadi aktif dan NIS diterbitkan.\n"
+                "[bold]Yang tidak ikut disetujui:[/bold] pendaftaran program tetap diproses di antrean "
+                "Pendaftaran Program. Invoice baru dibuat dan dikirim lewat email setelah program disetujui.\n\n"
+                "Pastikan nama, email terverifikasi, dan data profil sudah sesuai sebelum memilih ACC.",
+                title="[bold cyan]RINGKASAN DAMPAK PERSETUJUAN SISWA[/bold cyan]",
+                border_style="blue",
+                padding=(1, 2),
+                expand=True,
+            )
+        )
         paket_menunggu = _paket_menunggu_siswa(user["id"])
         if paket_menunggu is None:
-            peringatan("Detail pilihan paket belum dapat dibaca dari database.")
-        elif not paket_menunggu:
-            console.print(
-                Panel(
-                    "Siswa belum memilih paket bimbel. Akun tetap dapat disetujui "
-                    "dan NIS akan diterbitkan. Siswa dapat memilih program setelah "
-                    "akun aktif.",
-                    title="[bold cyan]BELUM ADA PENDAFTARAN PROGRAM[/bold cyan]",
-                    border_style="cyan",
-                    padding=(1, 2),
-                    expand=True,
-                )
-            )
-        else:
+            peringatan("Riwayat pendaftaran program tidak berhasil dibaca dari database.")
+        elif paket_menunggu:
             tabel_paket = Table(
-                title="Pendaftaran program yang menunggu keputusan terpisah",
+                title="Riwayat pendaftaran program yang masih menunggu",
                 header_style="bold cyan",
+                border_style="blue",
                 expand=True,
             )
             tabel_paket.add_column("Program")
@@ -138,22 +172,23 @@ def _tampilkan_detail_akun(user: dict):
             tabel_paket.add_column("Biaya/bulan", justify="right")
             for paket in paket_menunggu:
                 tabel_paket.add_row(
-                    str(paket.get("nama_program") or "-"),
-                    str(paket.get("kode_program") or "-"),
-                    str(paket.get("jenjang") or "-"),
-                    _format_rupiah(paket.get("harga_bulanan", 0)),
+                    cell(paket.get("nama_program")),
+                    cell(paket.get("kode_program")),
+                    cell(paket.get("jenjang")),
+                    cell(_format_rupiah(paket.get("harga_bulanan", 0))),
                 )
             console.print(tabel_paket)
-            console.print(
-                Panel(
-                    "Persetujuan akun hanya mengaktifkan akun dan menerbitkan NIS. "
-                    "Pendaftaran program tetap menunggu keputusan pada antrean "
-                    "Pendaftaran Program; tagihan baru dibuat saat program disetujui.",
-                    border_style="cyan",
-                    padding=(1, 2),
-                    expand=True,
-                )
+    elif user.get("role") == "tutor":
+        console.print(
+            Panel(
+                "Jika akun disetujui, akun tutor menjadi aktif dan kode tutor diterbitkan. "
+                "Persetujuan ini tidak membuat jadwal mengajar; jadwal dikelola admin setelahnya.",
+                title="[bold cyan]RINGKASAN DAMPAK PERSETUJUAN TUTOR[/bold cyan]",
+                border_style="blue",
+                padding=(1, 2),
+                expand=True,
             )
+        )
 
 
 def _daftar_akun_menunggu():
@@ -234,6 +269,22 @@ def _proses_aksi_akun(user: dict):
                 "akun siswa dan penerbitan NIS"
                 if user.get("role") == "siswa"
                 else "akun tutor dan penerbitan kode tutor"
+            )
+            console.print(
+                Panel(
+                    (
+                        "ACC akun siswa akan mengaktifkan akun dan menerbitkan NIS. "
+                        "Pendaftaran program tidak otomatis disetujui; invoice dibuat dan dikirim "
+                        "setelah program disetujui terpisah."
+                        if user.get("role") == "siswa"
+                        else "ACC akun tutor akan mengaktifkan akun dan menerbitkan kode tutor. "
+                        "Jadwal mengajar tidak dibuat otomatis."
+                    ),
+                    title="[bold yellow]KONFIRMASI KEPUTUSAN ADMIN[/bold yellow]",
+                    border_style="yellow",
+                    padding=(1, 2),
+                    expand=True,
+                )
             )
             yakin = questionary.confirm(
                 f"Setujui {deskripsi_aksi} untuk {user.get('username')}?",

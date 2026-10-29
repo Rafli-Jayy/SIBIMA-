@@ -206,3 +206,32 @@ def proses_persetujuan_akun(
         "jenis_identitas": jenis_identitas,
         "identitas": identitas,
     }
+
+def detail_pengguna_persetujuan(user_id: int) -> dict | None:
+    """Ambil detail akun dan profil yang diperlukan sebelum keputusan admin.
+
+    Password hash tidak pernah dipilih atau ditampilkan di UI.
+    """
+    if type(user_id) is not int or user_id <= 0:
+        raise ValueError("ID pengguna tidak valid.")
+
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    u.id, u.username, u.email, u.nama_lengkap, u.role, u.status,
+                    u.email_verified, u.created_at, u.last_login,
+                    u.failed_attempts, u.locked_until, u.must_change_password,
+                    u.approved_at, u.reject_reason,
+                    s.nis, s.jenjang, s.sekolah, s.no_hp AS student_no_hp,
+                    s.nama_wali,
+                    t.kode_tutor, t.keahlian, t.no_hp AS tutor_no_hp
+                FROM users AS u
+                LEFT JOIN students AS s ON s.user_id = u.id
+                LEFT JOIN tutors AS t ON t.user_id = u.id
+                WHERE u.id = %s;
+                """,
+                (user_id,),
+            )
+            return cur.fetchone()

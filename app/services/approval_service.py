@@ -9,7 +9,7 @@ from app.repositories import (
     enrollment_repo,
     onboarding_repo,
 )
-from app.services import email_service
+from app.services import email_service, invoice_email_service
 
 
 def _admin_aktif():
@@ -215,23 +215,12 @@ def setujui_enrollment(enrollment_id: int):
         siswa = None
     invoice = hasil.get("invoice")
     if invoice:
-        detail_email = (
-            f"Program: {hasil['nama_program']}\n"
-            f"No. invoice: {invoice['no_invoice']}\n"
-            f"Jumlah tagihan pertama: {_format_rupiah(invoice['jumlah'])}\n"
-            f"Periode: {invoice['periode'].strftime('%B %Y')}\n"
-            f"Jatuh tempo: {invoice['jatuh_tempo'].strftime('%d-%m-%Y')}"
-        )
         pesan_tagihan = (
-            f" Tagihan pertama {invoice['no_invoice']} sebesar "
+            f" Invoice {invoice['no_invoice']} sebesar "
             f"{_format_rupiah(invoice['jumlah'])}, jatuh tempo "
             f"{invoice['jatuh_tempo'].strftime('%d-%m-%Y')}."
         )
     else:
-        detail_email = (
-            f"Program: {hasil['nama_program']}\n"
-            "Program ini gratis sehingga tidak dibuat tagihan."
-        )
         pesan_tagihan = " Program gratis, tidak dibuat tagihan."
 
     if siswa is None:
@@ -241,21 +230,45 @@ def setujui_enrollment(enrollment_id: int):
             + pesan_tagihan
         )
 
-    try:
-        terkirim = email_service.kirim_notifikasi_status(
-            email=siswa["email"],
-            nama=siswa["nama_lengkap"],
-            kategori="pendaftaran",
-            status="aktif",
-            detail=detail_email,
-        )
-    except Exception:
-        terkirim = False
+    if invoice:
+        # Repository sudah commit enrollment aktif dan invoice terlebih dahulu.
+        # Pengiriman SMTP dilakukan sesudah transaksi agar kegagalan email tidak
+        # membatalkan persetujuan atau membuat admin menyetujui dua kali.
+        try:
+            terkirim, detail_pengiriman = invoice_email_service.kirim_email_invoice_pendaftaran(
+                email=siswa["email"],
+                nama=siswa["nama_lengkap"],
+                nama_program=hasil["nama_program"],
+                invoice=invoice,
+            )
+        except Exception as exc:
+            terkirim = False
+            detail_pengiriman = f"Pengiriman invoice gagal ({type(exc).__name__})."
+    else:
+        # Program gratis tetap mendapat email status, tanpa membuat invoice PDF.
+        try:
+            terkirim = email_service.kirim_notifikasi_status(
+                email=siswa["email"],
+                nama=siswa["nama_lengkap"],
+                kategori="pendaftaran",
+                status="aktif",
+                detail=f"Program: {hasil['nama_program']}\nProgram gratis; tidak ada tagihan.",
+            )
+            detail_pengiriman = "Email status pendaftaran diproses melalui SMTP."
+        except Exception as exc:
+            terkirim = False
+            detail_pengiriman = f"Email notifikasi gagal ({type(exc).__name__})."
 
     pesan = f"Pendaftaran {hasil['nama_program']} disetujui.{pesan_tagihan}"
     if not terkirim:
-        return True, pesan + " Email notifikasi gagal dikirim."
-    return True, pesan + " Email pemberitahuan telah dikirim."
+        return True, pesan + " Email invoice/notifikasi gagal dikirim. " + detail_pengiriman
+    if invoice:
+        return True, (
+            pesan + " Invoice PDF telah dibuat dan email invoice diterima server SMTP. "
+            "Jika siswa tidak menemukannya, periksa folder Spam. " + detail_pengiriman
+        )
+    return True, pesan + " Email pemberitahuan diproses melalui SMTP."
+
 
 
 def tolak_enrollment(enrollment_id: int, alasan: str):
