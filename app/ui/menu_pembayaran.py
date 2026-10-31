@@ -36,9 +36,11 @@ _LABEL_TAGIHAN = {
 }
 _LABEL_BAYAR = {
     "menunggu_pembayaran": "MENUNGGU PEMBAYARAN",
-    "menunggu_konfirmasi": "MENUNGGU KONFIRMASI ADMIN",
+    "menunggu_konfirmasi": "STATUS LEGACY / PERLU DITINJAU",
     "lunas": "LUNAS",
-    "ditolak": "DITOLAK",
+    "ditolak": "DITOLAK (LEGACY)",
+    "gagal": "SIMULASI GAGAL",
+    "direfund": "DIREFUND",
 }
 
 
@@ -96,7 +98,7 @@ def _tabel_tagihan(data, judul="Daftar Tagihan"):
 def _tabel_pembayaran(data, judul="Riwayat Pembayaran"):
     tabel = Table(title=judul, header_style="bold cyan", expand=True)
     tabel.add_column("ID", width=6)
-    tabel.add_column("Kode VA", min_width=20)
+    tabel.add_column("Kode Simulasi", min_width=20)
     tabel.add_column("Invoice", min_width=20)
     tabel.add_column("NIS", width=10)
     tabel.add_column("Siswa", min_width=18)
@@ -104,6 +106,7 @@ def _tabel_pembayaran(data, judul="Riwayat Pembayaran"):
     tabel.add_column("Nominal", justify="right", min_width=15)
     tabel.add_column("Status", min_width=22)
     tabel.add_column("Waktu bayar", min_width=18)
+    tabel.add_column("Kode refund", min_width=20)
     for item in data:
         tabel.add_row(
             str(item.get("payment_id", "-")), str(item.get("kode_bayar", "-")),
@@ -111,10 +114,10 @@ def _tabel_pembayaran(data, judul="Riwayat Pembayaran"):
             str(item.get("nama_siswa") or "-"), str(item.get("nama_program") or "-"),
             rupiah(item.get("payment_jumlah") or 0),
             _LABEL_BAYAR.get(item.get("payment_status"), str(item.get("payment_status") or "-").upper()),
-            _waktu(item.get("paid_at")),
+            _waktu(item.get("paid_at")), str(item.get("kode_refund") or "-"),
         )
     if not data:
-        tabel.add_row("-", "Belum ada riwayat pembayaran", "-", "-", "-", "-", "-", "-", "-")
+        tabel.add_row("-", "Belum ada riwayat pembayaran", "-", "-", "-", "-", "-", "-", "-", "-")
     console.print(tabel)
 
 
@@ -289,8 +292,11 @@ def menu_pembayaran_admin():
             ).ask()
             if yakin is True:
                 try:
-                    jumlah = billing_service.buat_tagihan_bulanan()
-                    sukses(f"Pembuatan selesai. Tagihan baru dibuat: {jumlah}.")
+                    hasil = billing_service.buat_tagihan_bulanan()
+                    sukses(
+                        f"Pembuatan selesai. Tagihan baru: {hasil['dibuat']}. "
+                        f"Email terkirim: {hasil['email_terkirim']}; gagal: {hasil['email_gagal']}."
+                    )
                 except (ValueError, PermissionError) as exc:
                     gagal(str(exc))
                 except psycopg.Error as exc:
@@ -306,95 +312,6 @@ def menu_pembayaran_admin():
             _admin_pilih_bukti("pdf")
         elif selected == "bukti_email":
             _admin_pilih_bukti("email")
-
-
-def _admin_proses_satu_pembayaran(payment_id, data):
-    item = next((x for x in data if x.get("payment_id") == payment_id), None)
-    if item is None:
-        peringatan("Pembayaran tidak ditemukan pada antrean terbaru.")
-        _jeda()
-        return
-
-    tabel = Table(show_header=False, box=None, expand=True)
-    tabel.add_column("Data", style="cyan", width=24)
-    tabel.add_column("Nilai", overflow="fold")
-    for k, v in [
-        ("ID pembayaran", item.get("payment_id")), ("Kode VA", item.get("kode_bayar")),
-        ("Nomor invoice", item.get("no_invoice")), ("Siswa", item.get("nama_siswa")),
-        ("NIS", item.get("nis") or "-"), ("Program", item.get("nama_program")),
-        ("Nominal VA", rupiah(item.get("payment_jumlah") or 0)),
-        ("Total tagihan", rupiah(item.get("invoice_jumlah") or 0)),
-        ("Waktu siswa melapor", _waktu(item.get("paid_at"))),
-    ]:
-        tabel.add_row(str(k), str(v if v is not None else "-"))
-    console.print(Panel(tabel, title="[bold cyan]DETAIL KONFIRMASI PEMBAYARAN[/bold cyan]", border_style="cyan"))
-    keputusan = questionary.select(
-        "Tindakan:",
-        choices=[Choice("Setujui — tandai lunas", "lunas"), Choice("Tolak pembayaran", "ditolak"), Choice("Kembali", "kembali")],
-        style=GAYA_BAYAR, qmark="⚡", pointer="▶",
-    ).ask()
-    if keputusan in (None, "kembali"):
-        return
-    alasan = None
-    if keputusan == "ditolak":
-        alasan = questionary.text("Alasan penolakan (wajib):", style=GAYA_BAYAR).ask()
-        if alasan is None or not alasan.strip():
-            peringatan("Penolakan dibatalkan karena alasan wajib diisi.")
-            _jeda()
-            return
-    yakin = questionary.confirm(
-        "Konfirmasi keputusan ini? Status tagihan akan ikut menjadi LUNAS jika disetujui.",
-        default=False, style=GAYA_BAYAR,
-    ).ask()
-    if yakin is not True:
-        info("Keputusan tidak disimpan.")
-        _jeda()
-        return
-    try:
-        billing_service.proses_konfirmasi_admin(payment_id, keputusan, alasan)
-        sukses("Pembayaran disetujui dan tagihan lunas." if keputusan == "lunas" else "Pembayaran ditolak; tagihan tetap belum dibayar.")
-    except (ValueError, PermissionError, LookupError) as exc:
-        gagal(str(exc))
-    except psycopg.Error as exc:
-        gagal(f"Gagal memproses pembayaran ({type(exc).__name__}).")
-    _jeda()
-
-
-def menu_konfirmasi_pembayaran():
-    """Antrean pembayaran yang dilaporkan sudah dibayar oleh siswa."""
-    if not session.punya_role("admin"):
-        peringatan("Akses ditolak. Menu ini khusus admin.")
-        return
-    while session.punya_role("admin"):
-        try:
-            data = billing_service.daftar_konfirmasi_pembayaran()
-        except (ValueError, PermissionError) as exc:
-            gagal(str(exc))
-            _jeda()
-            return
-        except psycopg.Error as exc:
-            gagal(f"Gagal memuat antrean pembayaran ({type(exc).__name__}).")
-            _jeda()
-            return
-        bersihkan_layar()
-        _header("Pusat Konfirmasi", "KONFIRMASI PEMBAYARAN")
-        _tabel_pembayaran(data, "Pembayaran Menunggu Konfirmasi")
-        choices = [
-            Choice(
-                f"#{x['payment_id']} • {x.get('nama_siswa', '-')} • {x.get('no_invoice', '-')} • "
-                f"{rupiah(x.get('payment_jumlah') or 0)}",
-                value=x["payment_id"],
-            ) for x in data
-        ]
-        if choices:
-            choices.append(Separator("────────────────────────"))
-        choices.extend([Choice("Muat ulang antrean", "refresh"), Choice("Kembali", "kembali")])
-        selected = questionary.select("Pilih pembayaran untuk diproses:", choices=choices, style=GAYA_BAYAR, qmark="💳", pointer="▶").ask()
-        if selected in (None, "kembali"):
-            return
-        if selected == "refresh":
-            continue
-        _admin_proses_satu_pembayaran(selected, data)
 
 
 def _siswa_tagihan_saya():
@@ -419,54 +336,65 @@ def _siswa_bayar_tagihan():
         gagal(f"Gagal memuat tagihan ({type(exc).__name__})."); _jeda(); return
 
     bersihkan_layar()
-    _header("Pembayaran", "BAYAR TAGIHAN DENGAN VIRTUAL ACCOUNT")
+    _header("Checkout", "SIMULASI PEMBAYARAN INTERNAL SIBIMA")
     _tabel_tagihan(data, "Pilih Tagihan Belum Lunas")
     eligible = [x for x in data if (x.get("jumlah") or 0) > 0]
     if not eligible:
         info("Tidak ada tagihan belum lunas yang bisa dibayar saat ini.")
-        _jeda()
-        return
-    choices = [
-        Choice(
-            f"{x.get('no_invoice', '-')} • {x.get('nama_program', '-')} • "
-            f"{_waktu(x.get('periode'))} • {rupiah(x.get('jumlah') or 0)}",
-            value=x["invoice_id"],
-        ) for x in eligible
-    ]
+        _jeda(); return
+    choices = [Choice(
+        f"{x.get('no_invoice', '-')} • {x.get('nama_program', '-')} • "
+        f"{_waktu(x.get('periode'))} • {rupiah(x.get('jumlah') or 0)}",
+        value=x["invoice_id"],
+    ) for x in eligible]
     choices.extend([Separator("────────────────────────"), Choice("Kembali", "kembali")])
     invoice_id = questionary.select("Pilih tagihan yang ingin dibayar:", choices=choices, style=GAYA_BAYAR, qmark="💳", pointer="▶").ask()
     if invoice_id in (None, "kembali"):
         return
-
+    yakin = questionary.confirm(
+        "Jalankan simulasi pembayaran sekarang? Tidak ada uang sungguhan yang dipindahkan.",
+        default=False, style=GAYA_BAYAR,
+    ).ask()
+    if yakin is not True:
+        info("Checkout dibatalkan; status tagihan tidak berubah."); _jeda(); return
     try:
-        payment = billing_service.mulai_pembayaran_va(invoice_id)
+        hasil = billing_service.bayar_simulasi(invoice_id)
         bersihkan_layar()
-        _header("Pembayaran", "REFERENSI VIRTUAL ACCOUNT")
-        console.print(Panel(
-            f"[bold white]Nomor Virtual Account[/bold white]\n[bold cyan]{payment['kode_bayar']}[/bold cyan]\n\n"
-            f"[bold white]Nominal penuh[/bold white]\n[bold green]{rupiah(payment['jumlah'])}[/bold green]\n\n"
-            f"Status: {_LABEL_BAYAR.get(payment.get('payment_status'), payment.get('payment_status', '-'))}\n\n"
-            "[yellow]Catatan:[/yellow] nomor VA ini merupakan referensi internal aplikasi. "
-            "Belum ada integrasi otomatis ke bank. Setelah pembayaran dilakukan di luar aplikasi, "
-            "pilih ‘Saya sudah membayar’ agar admin memeriksa dan mengonfirmasi secara manual.",
-            title="[bold cyan]DETAIL PEMBAYARAN[/bold cyan]", border_style="cyan", padding=(1, 3), expand=True,
-        ))
-        if payment.get("payment_status") == "menunggu_pembayaran":
-            sudah = questionary.confirm(
-                "Kamu benar-benar sudah melakukan pembayaran penuh dan ingin mengirim konfirmasi ke admin?",
-                default=False, style=GAYA_BAYAR,
-            ).ask()
-            if sudah is True:
-                billing_service.konfirmasi_sudah_bayar(payment["payment_id"])
-                sukses("Konfirmasi pembayaran terkirim. Tunggu pemeriksaan admin.")
+        if hasil.get("payment_status") == "lunas":
+            _header("Pembayaran Berhasil", "SIMULASI TRANSAKSI BERHASIL")
+            console.print(Panel(
+                f"[bold green]LUNAS[/bold green]\nInvoice: {hasil['no_invoice']}\n"
+                f"Program: {hasil.get('nama_program', '-')}\n"
+                f"Nominal: [bold green]{rupiah(hasil.get('payment_jumlah') or 0)}[/bold green]\n"
+                f"Kode simulasi: {hasil.get('kode_bayar')}\n\n"
+                "Status pembayaran diperbarui otomatis. Untuk pendaftaran baru, "
+                "pendaftaran sekarang menunggu keputusan admin. Untuk tagihan bulanan, "
+                "tagihan langsung lunas.\n\n[dim]Transaksi ini hanya simulasi; tidak ada uang sungguhan yang dipindahkan.[/dim]",
+                title="[bold cyan]CHECKOUT SIBIMA[/bold cyan]", border_style="green", padding=(1, 3), expand=True,
+            ))
+            sukses("Pembayaran simulasi berhasil. Status diperbarui otomatis.")
+            if hasil.get("email_sent"):
+                info("Email bukti pembayaran berhasil diproses.")
             else:
-                info("Pembayaran belum dikirim untuk konfirmasi. Kode VA tetap bisa dilihat dari proses Bayar Tagihan.")
-        elif payment.get("payment_status") == "menunggu_konfirmasi":
-            info("Pembayaran ini sudah menunggu pemeriksaan admin; tidak perlu mengirim ulang.")
+                peringatan("Email bukti belum terkirim; status pembayaran tetap tersimpan. " + str(hasil.get("email_message") or ""))
+        else:
+            _header("Pembayaran Gagal", "SIMULASI TRANSAKSI GAGAL")
+            console.print(Panel(
+                f"[bold red]GAGAL[/bold red]\nInvoice: {hasil['no_invoice']}\n"
+                f"Nominal: {rupiah(hasil.get('payment_jumlah') or 0)}\n"
+                "Tagihan tetap belum dibayar. Kamu dapat mencoba kembali dari menu checkout.\n\n"
+                "[dim]Hasil ini hanya simulasi; tidak ada uang sungguhan yang dipindahkan.[/dim]",
+                title="[bold cyan]CHECKOUT SIBIMA[/bold cyan]", border_style="red", padding=(1, 3), expand=True,
+            ))
+            peringatan("Simulasi pembayaran gagal. Tagihan belum berubah menjadi lunas.")
+            if hasil.get("email_sent"):
+                info("Email pemberitahuan kegagalan simulasi telah dikirim.")
+            else:
+                info("Email pemberitahuan belum terkirim; kamu tetap bisa mencoba kembali.")
     except (ValueError, PermissionError, LookupError) as exc:
         gagal(str(exc))
     except psycopg.Error as exc:
-        gagal(f"Gagal memproses pembayaran ({type(exc).__name__}).")
+        gagal(f"Gagal memproses simulasi pembayaran ({type(exc).__name__}).")
     _jeda()
 
 
@@ -524,7 +452,7 @@ def menu_pembayaran_siswa():
             "Pilih tindakan:",
             choices=[
                 Choice("Tagihan saya (status)", "tagihan"),
-                Choice("Bayar tagihan — nomor Virtual Account", "bayar"),
+                Choice("Checkout simulasi — Bayar Sekarang", "bayar"),
                 Choice("Riwayat pembayaran", "riwayat"),
                 Choice("Unduh bukti pembayaran (PDF)", "bukti_pdf"),
                 Choice("Kirim bukti pembayaran ke email terdaftar", "bukti_email"),

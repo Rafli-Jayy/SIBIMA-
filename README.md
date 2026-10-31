@@ -1,619 +1,485 @@
-# BIMBEL CERDAS (CLI)
-GANTI_DENGAN_PASSWORD_KUAT
+# SIBIMA — Sistem Informasi Bimbingan Belajar
 
-Program CLI Python untuk manajemen bimbingan belajar: admin, tutor, dan siswa.
+SIBIMA adalah aplikasi **CLI berbasis Python dan PostgreSQL** untuk membantu operasional bimbingan belajar. Aplikasi menyediakan akses terpisah untuk Admin, Tutor, dan Siswa. Navigasi interaktif menggunakan `questionary`, sedangkan panel dan tabel terminal menggunakan `rich`.
 
-## Menjalankan
-
-1. Buat dan aktifkan virtual environment, lalu `python -m pip install -r requirements.txt`
-2. Salin `.env.example` menjadi `.env` dan isi nilainya
-3. Buat database, lalu jalankan `sql/schema.sql` dan `sql/seed.sql`
-4. `python buat_admin.py` (sekali saja)
-5. Jalankan program dari folder proyek: `python -m app.main`
-
-## Struktur
-
-- `app/repositories/` : semua query SQL
-- `app/services/`     : aturan bisnis
-- `app/ui/`           : menu dan tampilan CLI
-- `app/utils/`        : validasi, keamanan, format
-- `sql/`              : schema dan seed
-- `tests/`            : pengujian
-
-# BIMBEL CERDAS - Sistem Manajemen Bimbingan Belajar (CLI)
-
-Program CLI berbasis Python dan PostgreSQL untuk mengelola bimbingan belajar.
-Ada tiga peran pengguna: **Admin**, **Tutor**, dan **Siswa**. Setiap peran punya
-menu dan hak akses sendiri.
-
-| Teknologi | Fungsi |
-|---|---|
-| Python 3 | Bahasa pemrograman |
-| PostgreSQL + `psycopg` | Basis data dan koneksi (connection pool) |
-| `bcrypt` | Hash password |
-| `rich` dan `questionary` | Tampilan tabel dan menu interaktif di terminal |
-| `python-dotenv` | Konfigurasi rahasia di file `.env` |
-| `google-genai` (opsional) | Integrasi Gemini |
-
-Fitur bertanda **(opsional)** adalah tambahan yang dikerjakan jika waktu cukup.
-
----
+> **Catatan keamanan:** jangan menaruh password database, password email, API key, atau kredensial lain di README maupun repository. Simpan nilai rahasia hanya di file `.env` lokal dan jangan commit file tersebut.
 
 ## Daftar isi
 
-1. [Alur umum akun](#1-alur-umum-akun-semua-peran)
-2. [Alur Admin](#2-alur-admin)
-3. [Alur Tutor](#3-alur-tutor)
-4. [Alur Siswa](#4-alur-siswa)
-5. [Alur pembayaran](#5-alur-pembayaran-simulasi)
-6. [Siklus lengkap lintas peran](#6-siklus-lengkap-lintas-peran)
-7. [Hak akses](#7-hak-akses)
-8. [Struktur proyek dan cara menjalankan](#8-struktur-proyek-dan-cara-menjalankan)
+1. [Fitur yang tersedia](#1-fitur-yang-tersedia)
+2. [Teknologi dan dependensi](#2-teknologi-dan-dependensi)
+3. [Struktur proyek](#3-struktur-proyek)
+4. [Persiapan instalasi baru](#4-persiapan-instalasi-baru)
+5. [Konfigurasi .env](#5-konfigurasi-env)
+6. [Menjalankan aplikasi](#6-menjalankan-aplikasi)
+7. [Alur akun dan OTP](#7-alur-akun-dan-otp)
+8. [Alur pendaftaran dan pembayaran](#8-alur-pendaftaran-dan-pembayaran)
+9. [Pengumuman dan notifikasi](#9-pengumuman-dan-notifikasi)
+10. [Database dan migrasi](#10-database-dan-migrasi)
+11. [Pengujian](#11-pengujian)
+12. [Pemecahan masalah](#12-pemecahan-masalah)
+13. [Batasan implementasi saat ini](#13-batasan-implementasi-saat-ini)
 
 ---
 
-## 1. Alur umum akun (semua peran)
+## 1. Fitur yang tersedia
 
-Siswa dan tutor mendaftar sendiri. Akun baru harus melewati **dua lapis
-verifikasi**: OTP (membuktikan email valid) lalu **konfirmasi admin**
-(membuktikan pendaftar boleh masuk). Satu-satunya akun yang dibuat tanpa
-register adalah **admin pertama**, lewat `python buat_admin.py`.
+### Admin
+- Pusat Konfirmasi untuk pendaftaran akun Siswa/Tutor dan pendaftaran program.
+- Manajemen akun: melihat akun, mengaktifkan/menonaktifkan, membuka kunci, dan reset password.
+- Data Siswa: daftar, pencarian, filter, detail, ubah data, dan nonaktifkan akun.
+- Data Tutor: daftar, detail dan jadwal mengajar, ubah data, dan nonaktifkan akun.
+- Program dan Ruang: mengelola program, harga, kuota, bobot nilai, serta ruang belajar.
+- Pendaftaran: melihat pendaftaran, memindahkan siswa ke program lain, dan membatalkan pendaftaran.
+- Jadwal: melihat, menambah, mengubah, dan menonaktifkan jadwal. Bentrok tutor/ruang dicegah oleh constraint database.
+- Pembayaran: membuat tagihan bulanan, melihat tagihan/tunggakan/riwayat, serta membuat atau mengirim bukti PDF.
+- Laporan: pemasukan bulanan, siswa per program, rekap kehadiran, rata-rata nilai, ekspor CSV, dan ekspor Excel.
+- Komunikasi: membuat pengumuman, melihat pengumuman aktif, dan mengarsipkan pengumuman.
+- Log Aktivitas: melihat aktivitas terbaru dan memfilter berdasarkan pengguna/aksi.
 
-### 1.1 Register, OTP, konfirmasi, login
+### Tutor
+- Melihat jadwal mengajar hari ini atau mingguan.
+- Melihat kelas yang diampu dan daftar siswa pada kelas tersebut.
+- Membuka pertemuan, mengisi/mengubah absensi, dan melihat rekap absensi.
+- Menginput/mengubah nilai tugas, kuis (nilai manual), UTS, dan UAS.
+- Menulis/mengubah topik dan ringkasan materi pertemuan.
+- Melihat dan mengubah profil serta mengganti password.
+- Membaca pengumuman melalui menu Notifikasi.
 
-```
- Pendaftar                    Sistem                         Admin
- ---------                    ------                         -----
- Register (pilih Siswa/Tutor)
-   isi nama, username, email,
-   password
-        |
-        v
-                 validasi input, cek username/email unik,
-                 simpan akun (status: belum_verifikasi)
-                 buat OTP 6 digit (berlaku 5 menit)
-        |
-        v
- Masukkan OTP  -------> OTP benar? --tidak--> sisa percobaan -1 (maks 3)
-                             |ya                (habis -> minta OTP baru)
-                             v
-                 status: menunggu_konfirmasi
-        |
-        v
- "Menunggu konfirmasi admin"            ------>   Pusat Konfirmasi
-                                                  lihat daftar pendaftar
-                                                       |
-                                  +--------------------+--------------------+
-                                  v                                         v
-                               SETUJUI                                    TOLAK
-                       status: aktif                              status: ditolak
-                       siswa -> NIS terbit                        alasan disimpan
-                       tutor -> kode tutor terbit
-        |
-        v
- Login --> menu sesuai peran
-```
+### Siswa
+- Melihat katalog program dan mendaftar program.
+- Melihat kelas/pendaftaran yang dimiliki.
+- Melihat jadwal, absensi, nilai, dan rapor TXT.
+- Melihat tagihan, menjalankan checkout simulasi, melihat riwayat pembayaran, dan mengunduh/mengirim bukti pembayaran.
+- Membaca catatan materi pertemuan.
+- Melihat menu informasi Tanya AI (fitur belum diaktifkan pada implementasi ini).
+- Melihat dan mengubah profil serta mengganti password.
+- Membaca pengumuman melalui menu Notifikasi.
 
-### 1.2 Status akun
-
-| Status | Arti | Bisa login? |
-|---|---|---|
-| `belum_verifikasi` | OTP belum dimasukkan | Tidak (diarahkan ke OTP) |
-| `menunggu_konfirmasi` | OTP benar, menunggu admin | Tidak |
-| `aktif` | Disetujui admin | Ya |
-| `ditolak` | Ditolak admin (alasan ditampilkan) | Tidak |
-| `nonaktif` | Dinonaktifkan admin | Tidak |
-
-### 1.3 Login
-
-```
- Input username + password
-        |
-        v
- Akun ada? --tidak--> "Username atau password salah"
-        |ya
-        v
- Sedang terkunci? --ya--> "Akun terkunci, coba lagi nanti"
-        |tidak
-        v
- Password cocok (bcrypt)? --tidak--> gagal +1
-        |ya                          gagal >= 3 -> kunci 5 menit
-        v
- Status akun aktif? --tidak--> tampilkan pesan sesuai status
-        |ya
-        v
- reset hitungan gagal, catat last_login
-        |
-        v
- Menu sesuai peran (Admin / Tutor / Siswa)
-```
-
-### 1.4 Lupa password dan ganti password
-
-- **Lupa password:** masukkan email -> OTP dikirim -> masukkan OTP -> password baru.
-- **Ganti password:** wajib memasukkan password lama lebih dulu.
-
-### 1.5 OTP
-
-- Dibuat dengan `secrets`, disimpan sebagai **hash** (bukan kode asli).
-- Berlaku 5 menit, sekali pakai, maksimal 3 kali percobaan.
-- Dua mode, diatur lewat `OTP_MODE` di `.env`:
-  `simulasi` (kode tampil di terminal) atau `email` (dikirim lewat SMTP).
+### Pembayaran simulasi
+SIBIMA **tidak terhubung ke bank atau payment gateway dan tidak memindahkan uang sungguhan**. Tombol `Bayar Sekarang` menjalankan simulasi internal. Persentase keberhasilan simulasi diatur melalui `PAYMENT_SIMULATION_SUCCESS_RATE`.
 
 ---
 
-## 2. Alur Admin
+## 2. Teknologi dan dependensi
 
-Admin mengelola data master, menyetujui pendaftaran, mengonfirmasi pembayaran,
-dan memantau laporan.
-
-### 2.1 Menu
-
-```
-DASHBOARD ADMIN  (ringkasan: siswa aktif, tutor, program, pemasukan bulan ini,
-                  tunggakan, jumlah item menunggu konfirmasi)
- |
- +-- [1]  Pusat Konfirmasi
- |         +-- Pendaftaran akun (siswa/tutor)
- |         +-- Pendaftaran siswa ke program
- |         +-- Pembayaran
- |         +-- Izin siswa dan ubah jadwal tutor (opsional)
- +-- [2]  Manajemen Akun      (nonaktifkan, buka kunci, reset password)
- +-- [3]  Data Siswa          (lihat, cari, filter, ubah, nonaktifkan)
- +-- [4]  Data Tutor          (lihat, ubah, tarif per pertemuan, nonaktifkan)
- +-- [5]  Program dan Ruang   (tambah, ubah, tutup program; kelola ruang)
- +-- [6]  Pendaftaran         (pindah atau batalkan siswa dari program)
- +-- [7]  Jadwal              (tambah, ubah, nonaktifkan; cek bentrok)
- +-- [8]  Pembayaran          (tagihan, tunggakan, diskon, bukti pembayaran)
- +-- [9]  Penggajian Tutor    (opsional)
- +-- [10] Laporan             (pemasukan, siswa per program, kehadiran; ekspor CSV)
- +-- [11] Pengumuman
- +-- [12] Log Aktivitas
- +-- [0]  Logout
-```
-
-Admin **tidak** menambah siswa atau tutor secara langsung. Akun hanya lahir dari
-alur register.
-
-### 2.2 Urutan kerja admin (dari awal sampai berjalan)
-
-```
- 1. Buat akun admin pertama (buat_admin.py), login
- 2. Isi data master:
-      Ruang  ->  Program (harga, kuota, bobot nilai)
- 3. Setujui pendaftaran TUTOR di Pusat Konfirmasi
- 4. Buat JADWAL: pilih program, tutor, ruang, hari, jam
-      (sistem menolak jika tutor atau ruang bentrok)
- 5. Setujui pendaftaran SISWA di Pusat Konfirmasi (NIS terbit)
- 6. Setujui pendaftaran siswa ke PROGRAM
-      (kuota dicek, tagihan pertama dibuat)
- 7. Buat tagihan bulanan untuk semua pendaftaran aktif
- 8. Konfirmasi PEMBAYARAN yang masuk (setujui atau tolak)
- 9. Pantau Dashboard dan Laporan, buat Pengumuman
-10. Akhir bulan: cek honor tutor (opsional), ekspor laporan
-```
-
-### 2.3 Alur tiap modul admin
-
-**Pusat Konfirmasi**
-
-```
- Pilih jenis antrean -> daftar item "menunggu"
-        |
-        v
- Pilih satu item -> lihat detail
-        |
-        +-- [Setujui] -> status berubah, dicatat siapa dan kapan,
-        |                akibat otomatis (lihat tabel di bawah)
-        +-- [Tolak]   -> wajib isi alasan, status ditolak
-```
-
-| Item yang disetujui | Akibat otomatis |
+| Teknologi | Kegunaan |
 |---|---|
-| Akun siswa | Status `aktif`, NIS dibuat |
-| Akun tutor | Status `aktif`, kode tutor dibuat |
-| Pendaftaran program | Enrollment `aktif`, tagihan pertama dibuat |
-| Pembayaran | Pembayaran `lunas`, status tagihan diperbarui, bukti dibuat |
+| Python | Aplikasi CLI |
+| PostgreSQL | Penyimpanan data |
+| `psycopg` dan `psycopg_pool` | Koneksi dan connection pool PostgreSQL |
+| `python-dotenv` | Membaca konfigurasi `.env` |
+| `bcrypt` | Hash password |
+| `questionary` | Menu interaktif terminal |
+| `rich` | Panel, tabel, dan tampilan terminal |
+| `email-validator` | Validasi alamat email |
+| `reportlab` | Pembuatan PDF |
+| `openpyxl` | Ekspor Excel |
+| `google-genai` | Dependensi Gemini yang tercantum; fitur Tanya AI belum diaktifkan |
+| `pytest` | Pengujian otomatis |
 
-**Program dan jadwal**
-
-```
- Program : isi kode, nama, jenjang, harga/bulan, kuota, bobot nilai (total 100)
- Jadwal  : pilih program -> tutor -> ruang -> hari -> jam mulai/selesai
-           bentrok dengan jadwal tutor/ruang lain? -> ditolak, pilih ulang
-```
-
-**Pendaftaran (koreksi)**
-
-```
- Pilih siswa -> pindah program atau batalkan
- Pendaftaran dibatalkan dengan mengubah status (riwayat tidak dihapus)
-```
-
-**Laporan**
-
-```
- Pilih laporan -> tabel di layar -> [Ekspor CSV] (opsional)
- Sumber: pemasukan bulanan, siswa per program, rekap kehadiran,
-         rata-rata nilai, tunggakan, honor tutor
-```
+Daftar paket dan versinya dikelola melalui `requirements.txt`.
 
 ---
 
-## 3. Alur Tutor
+## 3. Struktur proyek
 
-Tutor mengajar kelas yang ditugaskan admin, mencatat kehadiran dan nilai, dan
-hanya bisa mengakses **kelas dan siswa miliknya sendiri**.
+Struktur utama pada arsip proyek:
 
-### 3.1 Menu
-
-```
-DASHBOARD TUTOR  (jadwal hari ini, jumlah kelas dan siswa)
- |
- +-- [1] Jadwal Mengajar      (harian/mingguan; ajukan perubahan jadwal - opsional)
- +-- [2] Kelas dan Siswa      (daftar siswa per kelas yang diampu)
- +-- [3] Absensi              (isi, ubah, rekap)
- +-- [4] Nilai                (tugas, kuis, UTS, UAS)
- +-- [5] Catatan Materi       (topik dan ringkasan per pertemuan)
- +-- [6] Kuis                 (buat soal; buat otomatis dengan Gemini - opsional)
- +-- [7] Umpan Balik Siswa    (manual atau draf AI - opsional)
- +-- [8] Riwayat dan Honor    (pertemuan terlaksana, estimasi honor, rating)
- +-- [9] Profil
- +-- [0] Logout
-```
-
-### 3.2 Urutan kerja tutor
-
-```
- 1. Register -> OTP -> tunggu konfirmasi admin -> login
- 2. Lengkapi profil (keahlian, nomor HP)
- 3. Lihat jadwal mengajar yang dibuat admin
- 4. Tiap kelas berlangsung:
-      a. Buka pertemuan baru (nomor pertemuan otomatis)
-      b. Isi topik dan ringkasan materi
-      c. Isi absensi siswa (H / I / S / A)
- 5. Berikan nilai: tugas, kuis, UTS, UAS
- 6. Buat kuis untuk latihan siswa (opsional)
- 7. Tulis umpan balik perkembangan siswa (opsional)
- 8. Akhir bulan: cek rekap pertemuan dan honor
+```text
+SIBIMA/
+├── app/
+│   ├── repositories/       # Query dan akses data PostgreSQL
+│   ├── services/           # Aturan bisnis dan pemeriksaan hak akses
+│   ├── ui/                 # Menu CLI Admin, Tutor, Siswa, dan autentikasi
+│   ├── utils/              # Validasi, keamanan, format, dan exception
+│   ├── config.py           # Membaca konfigurasi .env
+│   ├── db.py               # Connection pool PostgreSQL
+│   ├── main.py             # Titik masuk aplikasi
+│   └── session.py          # Sesi pengguna aktif
+├── sql/
+│   ├── schema.sql          # Skema database terkini untuk instalasi baru
+│   ├── seed.sql            # Data contoh program dan ruang
+│   ├── migrations/         # Migrasi untuk database versi sebelumnya
+│   └── permissions/        # Skrip hak akses database
+├── tests/                  # Pengujian otomatis
+├── bukti/                  # Keluaran bukti/dokumen lokal
+├── buat_admin.py           # Membuat akun admin pertama
+├── buat_struktur.py        # Utilitas struktur proyek
+├── .env.example            # Template konfigurasi
+├── .gitignore
+├── MENU_CLI.md             # Referensi menu CLI
+├── README.md
+└── requirements.txt
 ```
 
-### 3.3 Alur tiap modul tutor
+Alur arsitektur aplikasi:
 
-**Absensi**
-
-```
- Pilih kelas -> pilih tanggal/pertemuan
-        |
-        v
- Daftar siswa AKTIF di program itu
-        |
-        v
- Isi status tiap siswa: [H]adir [I]zin [S]akit [A]lpa
-        |
-        v
- Simpan (boleh disimpan ulang untuk mengoreksi)
- -> ringkasan: Hadir 2, Izin 0, Sakit 1, Alpa 0
+```text
+UI (app/ui)
+    ↓
+Services (app/services)
+    ↓
+Repositories (app/repositories)
+    ↓
+PostgreSQL (app/db.py)
 ```
 
-**Nilai**
-
-```
- Pilih kelas -> pilih siswa -> pilih jenis (tugas/kuis/UTS/UAS)
- -> isi judul dan nilai (0-100) -> simpan
- -> sistem menghitung nilai akhir berbobot (bobot diatur per program)
-    Selama UTS/UAS belum ada, hasilnya "nilai sementara".
-```
-
-**Kuis**
-
-```
- Buat kuis (pilih program, judul)
-   -> tambah soal: pertanyaan, opsi A-D, kunci jawaban
-   -> atau [Buat otomatis dengan Gemini] (opsional)
-   -> kuis aktif dan muncul di menu siswa
-```
+UI menangani interaksi pengguna. Aturan bisnis dan pemeriksaan hak akses ditempatkan di service. Repository menangani query database.
 
 ---
 
-## 4. Alur Siswa
+## 4. Persiapan instalasi baru
 
-Siswa mendaftar, mengikuti program, membayar, dan memantau perkembangannya.
-Siswa hanya bisa melihat **data miliknya sendiri**.
+### Prasyarat
+- Python yang mendukung sintaks proyek dan pip.
+- PostgreSQL aktif.
+- Terminal PowerShell (Windows) atau terminal shell (Linux/macOS).
 
-### 4.1 Menu
+### Langkah 1 — Buka folder proyek
 
-```
-DASHBOARD SISWA  (jadwal hari ini, tagihan jatuh tempo, pengumuman terbaru)
- |
- +-- [1]  Katalog Program     (lihat, daftar mandiri)
- +-- [2]  Kelas Saya          (program diikuti, tutor, status)
- +-- [3]  Jadwal              (harian/mingguan, pengingat jadwal terdekat)
- +-- [4]  Absensi             (riwayat dan persentase; ajukan izin - opsional)
- +-- [5]  Nilai dan Rapor     (nilai per mapel, rata-rata, cetak rapor TXT)
- +-- [6]  Pembayaran          (tagihan, bayar, riwayat, bukti)
- +-- [7]  Materi dan Kuis     (catatan materi, kerjakan kuis, riwayat skor)
- +-- [8]  Nilai Tutor         (beri rating dan masukan)
- +-- [9]  Tanya AI            (opsional, Gemini)
- +-- [10] Profil
- +-- [0]  Logout
-```
+Buka PowerShell di folder root SIBIMA, yaitu folder yang berisi `app`, `sql`, dan `requirements.txt`.
 
-### 4.2 Urutan kerja siswa
+### Langkah 2 — Buat virtual environment
 
-```
- 1. Register -> OTP -> tunggu konfirmasi admin -> login
- 2. Lengkapi profil (jenjang, sekolah, nomor HP, nama wali)
- 3. Buka Katalog Program -> pilih program -> Daftar
-      status: "menunggu persetujuan admin"
- 4. Setelah disetujui: program muncul di Kelas Saya,
-    tagihan pertama terbit
- 5. Bayar tagihan (lihat bagian 5)
- 6. Ikuti kelas sesuai jadwal
- 7. Pantau absensi, nilai, dan rapor
- 8. Kerjakan kuis latihan
- 9. Beri rating untuk tutor
-```
-
-### 4.3 Alur tiap modul siswa
-
-**Daftar program**
-
-```
- Katalog (hanya program berstatus "buka", tampil sisa kuota)
-        |
-        v
- Pilih program -> konfirmasi daftar
-        |
-        v
- Kuota masih ada? --tidak--> "Kuota penuh"
-        |ya
-        v
- Sudah terdaftar di program ini? --ya--> ditolak
-        |tidak
-        v
- Pendaftaran tersimpan (status: menunggu) -> menunggu admin
-```
-
-**Kuis**
-
-```
- Pilih kuis -> jawab soal satu per satu (A-D)
-        |
-        v
- Skor dihitung otomatis -> tampil benar/salah dan skor akhir
-        |
-        v
- Hasil tersimpan di riwayat kuis
-```
-
-**Rapor**
-
-```
- Nilai per mapel: tugas, kuis, UTS, UAS, nilai akhir, tren naik/turun
- -> [Cetak rapor ke TXT]
-```
-
----
-
-## 5. Alur pembayaran (simulasi)
-
-Tidak memakai payment gateway sungguhan. Program meniru alurnya, dan semua kode
-dibuat secara acak.
-
-```
- SISWA                                SISTEM                       ADMIN
- -----                                ------                       -----
- Pilih tagihan, pilih metode
- (VA / E-Wallet / QRIS / Tunai)
-        |
-        v
-                         buat kode bayar acak
-                         status: menunggu_pembayaran
-                         batas waktu: 24 jam
-        |
-        v
- Tampil instruksi: kode, jumlah, batas bayar
-        |
-        v
- Klik "Saya sudah membayar"
- isi nominal (harus sesuai)
-        |
-        v
-                         status: menunggu_konfirmasi  ---------->  Pusat Konfirmasi
-                                                                    cek nominal
-                                                                        |
-                                                       +----------------+----------------+
-                                                       v                                 v
-                                                    SETUJUI                            TOLAK
-                                              pembayaran: lunas                  pembayaran: ditolak
-                                              tagihan: lunas / cicilan           (alasan dicatat,
-                                              bukti pembayaran dibuat             siswa bisa bayar ulang)
-        |
-        v
- Lihat status dan bukti di Riwayat Pembayaran
-
- Lewat batas waktu tanpa klik "sudah bayar" -> status: kedaluwarsa
- (siswa membuat kode pembayaran baru)
-```
-
-| Status pembayaran | Arti |
-|---|---|
-| `menunggu_pembayaran` | Kode dibuat, belum dibayar (ada batas waktu) |
-| `menunggu_konfirmasi` | Siswa sudah menekan "sudah bayar" |
-| `lunas` | Dikonfirmasi admin |
-| `ditolak` | Ditolak admin |
-| `kedaluwarsa` | Melewati batas waktu |
-| `dibatalkan` | Dibatalkan siswa |
-
-Status tagihan: `belum_dibayar` -> `cicilan` -> `lunas` (atau `batal`).
-Hanya pembayaran berstatus `lunas` yang dihitung sebagai pemasukan di laporan.
-
----
-
-## 6. Siklus lengkap lintas peran
-
-Gambaran satu siklus dari pendaftaran sampai laporan, siapa melakukan apa, dan
-tabel mana yang berubah.
-
-| No | Pelaku | Aksi | Tabel utama |
-|---|---|---|---|
-| 1 | Admin | Membuat ruang, program, dan akun admin pertama | `rooms`, `programs`, `users` |
-| 2 | Tutor | Register, OTP | `users`, `tutors`, `otp_codes` |
-| 3 | Admin | Menyetujui tutor, membuat jadwal | `users`, `tutors`, `schedules` |
-| 4 | Siswa | Register, OTP | `users`, `students`, `otp_codes` |
-| 5 | Admin | Menyetujui siswa (NIS terbit) | `users`, `students` |
-| 6 | Siswa | Mendaftar ke program | `enrollments` |
-| 7 | Admin | Menyetujui pendaftaran, tagihan pertama terbit | `enrollments`, `invoices` |
-| 8 | Siswa | Membayar (simulasi) | `payments` |
-| 9 | Admin | Mengonfirmasi pembayaran | `payments`, `invoices` |
-| 10 | Tutor | Membuka pertemuan dan mengisi absensi | `class_sessions`, `attendances` |
-| 11 | Tutor | Mengisi nilai, membuat kuis | `grades`, `quizzes`, `quiz_questions` |
-| 12 | Siswa | Melihat jadwal, absensi, nilai; mengerjakan kuis; menilai tutor | `quiz_attempts`, `tutor_reviews` |
-| 13 | Admin | Melihat laporan dan honor tutor | view `v_*` |
-
-Setiap aksi penting (login, persetujuan, pembayaran) dicatat di `activity_logs`.
-
----
-
-## 7. Hak akses
-
-| Fitur | Admin | Tutor | Siswa |
-|---|---|---|---|
-| Register | - | Ya (perlu konfirmasi admin) | Ya (perlu konfirmasi admin) |
-| Pusat Konfirmasi | Penuh | - | - |
-| Kelola akun, program, ruang | Penuh | - | - |
-| Jadwal | Kelola | Lihat milik sendiri | Lihat milik sendiri |
-| Daftar siswa | Semua | Hanya kelas yang diampu | - |
-| Absensi | Lihat semua | Isi untuk kelasnya | Lihat milik sendiri |
-| Nilai | Lihat semua | Isi untuk kelasnya | Lihat milik sendiri |
-| Pembayaran | Kelola dan konfirmasi | - | Bayar dan lihat milik sendiri |
-| Pengumuman | Buat | Lihat | Lihat |
-| Laporan | Penuh | Terbatas (honor sendiri) | - |
-| Log aktivitas | Lihat | - | - |
-
-Aturan penerapan: setiap fungsi memfilter data dengan id pengguna yang sedang
-login (siswa lewat `student_id`, tutor lewat `schedules.tutor_id`). Pengecekan
-peran dilakukan di lapisan `services`, bukan hanya di menu.
-
----
-
-## 8. Struktur proyek dan cara menjalankan
-
-```
-bimbel/
-+-- app/
-|   +-- main.py, config.py, db.py, session.py
-|   +-- repositories/   query SQL per kelompok tabel
-|   +-- services/       aturan bisnis dan pengecekan hak akses
-|   +-- ui/             menu dan tampilan CLI (rich, questionary)
-|   +-- utils/          validasi, keamanan, format, exception
-+-- sql/                schema.sql, seed.sql
-+-- tests/              pengujian (pytest)
-+-- bukti/              bukti pembayaran dan rapor (TXT)
-+-- buat_admin.py       membuat admin pertama
-+-- .env.example, requirements.txt
-```
-
-Alur kode: `ui -> services -> repositories -> db`.
-
-### Menjalankan
-
-```bash
-# 1. Virtual environment dan library
+```powershell
 python -m venv .venv
-.venv\Scripts\activate            # Windows
-source .venv/bin/activate         # Linux / Mac
+```
+
+Aktifkan di Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Jika PowerShell menolak menjalankan skrip aktivasi, gunakan Command Prompt:
+
+```bat
+.venv\Scripts\activate.bat
+```
+
+### Langkah 3 — Pasang dependensi
+
+```powershell
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
 
-# 2. Konfigurasi: salin .env.example menjadi .env lalu isi nilainya
+### Langkah 4 — Siapkan PostgreSQL
 
-# 3. Database (PostgreSQL)
-psql -U bimbel_user -d bimbel_db -h localhost -1 -v ON_ERROR_STOP=1 -f sql/schema.sql
-psql -U bimbel_user -d bimbel_db -h localhost -f sql/seed.sql
+Buat database dan role PostgreSQL sesuai konfigurasi yang akan digunakan. Contoh berikut menggunakan nama `bimbel_db` dan `bimbel_user`; sesuaikan password dan hak akses dengan lingkungan sendiri.
 
-# 4. Admin pertama (sekali saja)
+```sql
+CREATE ROLE bimbel_user WITH LOGIN PASSWORD 'GANTI_DENGAN_PASSWORD_LOKAL';
+CREATE DATABASE bimbel_db OWNER bimbel_user;
+```
+
+Jalankan SQL tersebut melalui `psql` sebagai administrator PostgreSQL. Jika role/database sudah tersedia, jangan membuatnya kembali.
+
+### Langkah 5 — Buat file `.env`
+
+Salin template:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env`, lalu isi konfigurasi database dan layanan yang akan digunakan. Lihat bagian [Konfigurasi .env](#5-konfigurasi-env).
+
+### Langkah 6 — Buat skema dan data contoh
+
+Untuk **database baru yang masih kosong**, jalankan skema terkini satu kali:
+
+```powershell
+psql -U bimbel_user -d bimbel_db -h localhost -v ON_ERROR_STOP=1 -f sql/schema.sql
+```
+
+Kemudian masukkan data contoh:
+
+```powershell
+psql -U bimbel_user -d bimbel_db -h localhost -v ON_ERROR_STOP=1 -f sql/seed.sql
+```
+
+`seed.sql` menambahkan contoh ruang dan program. Skrip ini tidak membuat akun admin.
+
+### Langkah 7 — Buat admin pertama
+
+```powershell
 python buat_admin.py
+```
 
-# 5. Jalankan program dari folder proyek
+Masukkan username, email, nama lengkap, dan password admin ketika diminta. Password diketik tanpa ditampilkan di terminal.
+
+### Langkah 8 — Jalankan aplikasi
+
+```powershell
 python -m app.main
+```
 
-# 6. Pengujian
+> Jangan menjalankan `schema.sql` berulang kali pada database yang sudah berisi skema. File tersebut merupakan skema lengkap untuk instalasi baru, bukan skrip pembaruan database.
+
+---
+
+## 5. Konfigurasi `.env`
+
+Gunakan `.env.example` sebagai template. Variabel yang dibaca aplikasi:
+
+| Variabel | Fungsi | Nilai contoh/default |
+|---|---|---|
+| `DB_HOST` | Host PostgreSQL | `localhost` |
+| `DB_PORT` | Port PostgreSQL | `5432` |
+| `DB_NAME` | Nama database | `bimbel_db` |
+| `DB_USER` | Role database | `bimbel_user` |
+| `DB_PASSWORD` | Password role database | Isi sendiri |
+| `OTP_MODE` | Mode OTP: `simulasi` atau `email` | `simulasi` |
+| `OTP_EXPIRE_MINUTES` | Masa berlaku OTP | `5` |
+| `OTP_MAX_ATTEMPTS` | Maksimal percobaan OTP | `3` |
+| `MAX_LOGIN_ATTEMPTS` | Batas percobaan login gagal | `3` |
+| `LOCK_MINUTES` | Lama penguncian setelah gagal login | `5` |
+| `SMTP_HOST` | Host SMTP | `smtp.gmail.com` |
+| `SMTP_PORT` | Port SMTP | `587` |
+| `SMTP_USER` | Akun pengirim email | Kosong sampai dikonfigurasi |
+| `SMTP_PASSWORD` | Kredensial SMTP/app password | Kosong sampai dikonfigurasi |
+| `GEMINI_API_KEY` | API key Gemini untuk Tanya AI | Kosong jika tidak digunakan |
+| `PAYMENT_SIMULATION_SUCCESS_RATE` | Persentase simulasi pembayaran berhasil | `90` |
+
+Contoh:
+
+```dotenv
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=bimbel_db
+DB_USER=bimbel_user
+DB_PASSWORD=password_lokal_yang_kuat
+
+OTP_MODE=simulasi
+OTP_EXPIRE_MINUTES=5
+OTP_MAX_ATTEMPTS=3
+
+MAX_LOGIN_ATTEMPTS=3
+LOCK_MINUTES=5
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+
+GEMINI_API_KEY=
+PAYMENT_SIMULATION_SUCCESS_RATE=90
+```
+
+Ketentuan:
+- `OTP_MODE=simulasi`: OTP ditampilkan melalui alur simulasi di terminal.
+- `OTP_MODE=email`: SMTP harus dikonfigurasi agar OTP dapat dikirim.
+- `PAYMENT_SIMULATION_SUCCESS_RATE` menerima angka `0` sampai `100`. Nilai `0` membuat simulasi selalu gagal; nilai `100` membuat simulasi selalu berhasil.
+- Jangan menggunakan password contoh di atas untuk server atau akun sungguhan.
+- Jangan membagikan file `.env`. File tersebut sudah dicantumkan dalam `.gitignore`.
+
+---
+
+## 6. Menjalankan aplikasi
+
+Pastikan virtual environment aktif, `.env` sudah diisi, dan PostgreSQL berjalan.
+
+```powershell
+python -m app.main
+```
+
+Menu awal menyediakan:
+- Login.
+- Register sebagai Siswa atau Tutor.
+- Lupa Password.
+- Keluar.
+
+Setelah login, aplikasi menampilkan menu sesuai role akun. Detail menu dan submenu tersedia pada [MENU_CLI.md](MENU_CLI.md).
+
+---
+
+## 7. Alur akun dan OTP
+
+1. Calon Siswa atau Tutor memilih Register.
+2. Pendaftar mengisi data akun.
+3. Sistem memvalidasi data dan mengirim/memperlihatkan OTP sesuai `OTP_MODE`.
+4. OTP memiliki masa berlaku dan batas percobaan sesuai konfigurasi.
+5. Setelah OTP benar, akun berstatus `menunggu_konfirmasi`.
+6. Admin memeriksa pendaftaran akun melalui Pusat Konfirmasi.
+7. Jika disetujui, akun menjadi `aktif`. NIS siswa atau kode tutor diterbitkan.
+8. Jika ditolak, alasan penolakan disimpan.
+9. Akun aktif dapat login ke menu sesuai role.
+
+Password disimpan menggunakan hash bcrypt. OTP disimpan dalam bentuk hash, bukan kode OTP asli.
+
+---
+
+## 8. Alur pendaftaran dan pembayaran
+
+### Pendaftaran program berbayar
+
+1. Siswa memilih program yang tersedia dan mengonfirmasi pendaftaran.
+2. Sistem membuat enrollment berstatus `menunggu_pembayaran` dan invoice pertama.
+3. Sistem membuat dokumen invoice dan mengirim email jika konfigurasi email tersedia.
+4. Siswa memilih `Bayar Sekarang`.
+5. Mesin simulasi internal menentukan hasil berdasarkan konfigurasi keberhasilan:
+   - **Berhasil:** pembayaran dan invoice menjadi `lunas`; enrollment masuk antrean konfirmasi admin dengan status `menunggu`.
+   - **Gagal:** invoice tetap `belum_dibayar`; siswa dapat mencoba lagi.
+6. Admin menerima atau menolak pendaftaran, bukan mengonfirmasi transaksi pembayaran.
+7. Jika admin menerima, enrollment menjadi `aktif`.
+8. Jika admin menolak pendaftaran yang sudah dibayar, sistem mencatat refund simulasi secara terpisah dan memperbarui status terkait.
+
+### Program gratis
+
+Program dengan harga nol tidak memerlukan invoice atau pembayaran. Pendaftaran langsung masuk antrean keputusan admin.
+
+### Pembayaran bulanan
+
+Admin membuat tagihan bulanan untuk enrollment aktif. Siswa melakukan checkout simulasi. Hasil berhasil memperbarui invoice/payment secara otomatis; hasil gagal membiarkan invoice belum dibayar agar dapat dicoba kembali.
+
+### Penting
+
+Pembayaran dan refund di SIBIMA adalah **simulasi internal**. Tidak ada uang sungguhan yang ditransfer, tidak ada koneksi bank, dan tidak ada payment gateway.
+
+---
+
+## 9. Pengumuman dan notifikasi
+
+- Admin membuat pengumuman melalui menu **Komunikasi**.
+- Setiap pengumuman dapat ditujukan kepada Siswa, Tutor, atau keduanya.
+- Siswa dan Tutor membaca pengumuman dari menu **Notifikasi**, bukan dari dashboard.
+- Status baca dicatat per pengguna. Status baca satu pengguna tidak mengubah status baca pengguna lain.
+- Notifikasi yang belum dibaca ditandai `BARU`; menu menampilkan jumlah belum dibaca jika jumlahnya lebih dari nol.
+- Admin dapat melihat pengumuman aktif dan arsip.
+- Pengumuman yang diarsipkan tidak ditampilkan lagi kepada Siswa/Tutor. Arsip tidak memiliki fitur pemulihan melalui menu.
+
+---
+
+## 10. Database dan migrasi
+
+### Objek pada `sql/schema.sql`
+
+Skema terkini dalam arsip ini mendefinisikan:
+
+**18 tabel**
+- `users`
+- `otp_codes`
+- `students`
+- `tutors`
+- `programs`
+- `rooms`
+- `schedules`
+- `enrollments`
+- `invoices`
+- `payments`
+- `payment_refunds`
+- `class_sessions`
+- `attendances`
+- `grades`
+- `announcements`
+- `announcement_targets`
+- `announcement_reads`
+- `activity_logs`
+
+**5 view**
+- `v_program_kuota`
+- `v_tagihan_status`
+- `v_pemasukan_bulanan`
+- `v_rekap_kehadiran`
+- `v_nilai_akhir`
+
+**12 tipe**
+- 11 ENUM dan satu range type `timerange`.
+
+### Instalasi baru vs database yang sudah berjalan
+
+- **Database baru/kosong:** gunakan `sql/schema.sql`, lalu `sql/seed.sql`.
+- **Database lama yang sudah berisi data:** backup terlebih dahulu dan tentukan versi skema asal. Jangan menjalankan `schema.sql` penuh di atas database yang sudah ada.
+- File dalam `sql/migrations/` adalah migrasi historis untuk jalur pembaruan dari versi sebelumnya. Migrasi harus dipilih dan dijalankan sesuai kondisi database asal, bukan dijalankan secara acak atau diulang tanpa pemeriksaan.
+- `sql/permissions/20261026_laporan_select.sql` memberikan hak `SELECT` untuk objek laporan. Jalankan hanya jika diperlukan, sebagai pemilik objek atau administrator PostgreSQL. Jika role database bukan `bimbel_user`, sesuaikan nama role dalam skrip sebelum digunakan.
+
+### Backup
+
+Contoh membuat backup:
+
+```powershell
+pg_dump -U bimbel_user -h localhost -d bimbel_db -F c -f backup_sibima.dump
+```
+
+Contoh pemulihan ke database tujuan yang sudah disiapkan:
+
+```powershell
+pg_restore -U bimbel_user -h localhost -d bimbel_db --clean --if-exists backup_sibima.dump
+```
+
+Perintah pemulihan dapat mengganti objek database tujuan. Pastikan target benar dan backup tersedia sebelum menjalankannya.
+
+---
+
+## 11. Pengujian
+
+Jalankan dari root proyek dengan virtual environment aktif:
+
+```powershell
 python -m pytest
 ```
 
-### Ringkasan database
+Untuk melihat detail setiap test:
 
-22 tabel dan 7 view. Konfirmasi admin memakai kolom `status`, `processed_by`,
-dan `alasan_tolak` pada tabel terkait. Data tidak dihapus permanen: akun,
-pendaftaran, dan pembayaran hanya berubah status sehingga riwayat tetap utuh.
-Jadwal bentrok (tutor dan ruang) ditolak langsung oleh PostgreSQL.
-Cadangan data: `pg_dump -U bimbel_user -d bimbel_db > cadangan.sql`.
+```powershell
+python -m pytest -v
+```
 
-Dibuat    : 50 file
-Dilewati  : 0 file (sudah ada, tidak ditimpa)
+Jika test gagal dikoleksi karena dependensi belum tersedia, pasang ulang dependensi:
 
-SIBIMA/
-├── .vscode/
-│   └── settings.json
-├── app/
-│   ├── repositories/
-│   │   ├── __init__.py
-│   │   ├── academic_repo.py
-│   │   ├── billing_repo.py
-│   │   ├── engagement_repo.py
-│   │   ├── enrollment_repo.py
-│   │   ├── log_repo.py
-│   │   ├── otp_repo.py
-│   │   ├── profile_repo.py
-│   │   ├── program_repo.py
-│   │   ├── quiz_repo.py
-│   │   ├── report_repo.py
-│   │   ├── schedule_repo.py
-│   │   └── user_repo.py
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── academic_service.py
-│   │   ├── ai_service.py
-│   │   ├── approval_service.py
-│   │   ├── auth_service.py
-│   │   ├── billing_service.py
-│   │   ├── email_service.py
-│   │   ├── enrollment_service.py
-│   │   ├── otp_service.py
-│   │   ├── quiz_service.py
-│   │   └── report_service.py
-│   ├── ui/
-│   │   ├── __init__.py
-│   │   ├── console.py
-│   │   ├── menu_admin.py
-│   │   ├── menu_auth.py
-│   │   ├── menu_siswa.py
-│   │   ├── menu_tutor.py
-│   │   └── tabel.py
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── exceptions.py
-│   │   ├── formatters.py
-│   │   ├── security.py
-│   │   └── validators.py
-│   ├── __init__.py
-│   ├── config.py
-│   ├── db.py
-│   ├── main.py
-│   └── session.py
-├── bukti/
-│   └── .gitkeep
-├── sql/
-├── tests/
-│   ├── __init__.py
-│   ├── test_formatters.py
-│   ├── test_security.py
-│   └── test_validators.py
-├── .env.example
-├── .gitignore
-├── README.md
-├── buat_struktur.py
-└── requirements.txt
+```powershell
+python -m pip install -r requirements.txt
+```
 
-Langkah berikut: salin .env.example menjadi .env lalu isi nilainya.
+Pengujian otomatis tidak menggantikan pengujian integrasi PostgreSQL, SMTP, atau pemeriksaan alur UI secara manual. Catat hasil pengujian aktual; jangan menyimpulkan seluruh sistem lulus hanya dari sebagian test.
+
+---
+
+## 12. Pemecahan masalah
+
+### `ModuleNotFoundError`
+Pastikan virtual environment aktif dan pasang dependensi:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### Konfigurasi database belum lengkap
+Pastikan file `.env` ada di root proyek dan nilai `DB_NAME`, `DB_USER`, serta `DB_PASSWORD` sudah diisi.
+
+### Koneksi PostgreSQL gagal
+Periksa:
+- Service PostgreSQL sedang berjalan.
+- Database dan role sudah dibuat.
+- Host dan port benar.
+- Password pada `.env` cocok.
+- Role memiliki hak akses ke database dan objek yang digunakan.
+
+### Laporan gagal karena `InsufficientPrivilege`
+Periksa instruksi yang ditampilkan aplikasi. Skrip hak akses laporan berada di `sql/permissions/20261026_laporan_select.sql`. Jalankan dengan akun pemilik objek/administrator setelah memeriksa dan menyesuaikan nama role bila diperlukan.
+
+### Email tidak terkirim
+Pastikan `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, dan `SMTP_PASSWORD` benar. Untuk penyedia email yang memerlukan app password, gunakan kredensial aplikasi sesuai kebijakan penyedia email.
+
+### Tanya AI tidak tersedia
+Fitur ini memerlukan `GEMINI_API_KEY` yang valid. Fitur AI bersifat opsional.
+
+---
+
+## 13. Batasan implementasi saat ini
+
+Dokumentasi ini mengikuti menu dan modul yang ada pada arsip kode yang disinkronkan. Beberapa batasan penting:
+
+- Pembayaran/refund hanya simulasi internal, bukan transaksi finansial nyata.
+- Tidak ada integrasi payment gateway.
+- Modul kuis mandiri, bank soal, riwayat pengerjaan kuis, rating tutor, feedback siswa, permohonan izin, dan penggajian tutor tidak termasuk dalam menu/skema versi ini.
+- Nilai dengan jenis `kuis` tetap dapat dicatat secara manual oleh Tutor; ini bukan modul kuis mandiri.
+- Pengumuman dikirim sebagai notifikasi dalam aplikasi, bukan email massal.
+- Menu Tanya AI saat ini hanya menampilkan informasi bahwa fitur belum diaktifkan. Mengisi `GEMINI_API_KEY` saja belum membuat fitur tersebut berfungsi.
+- PDF konfirmasi pendaftaran tidak didokumentasikan sebagai fitur yang tersedia pada versi ini. Bukti invoice/pembayaran/refund merupakan dokumen yang berbeda.
+
+---
+
+Dokumentasi ini menjelaskan struktur dan perilaku yang ditemukan pada versi kode SIBIMA yang disinkronkan. Jika implementasi berubah, perbarui README dan MENU_CLI bersamaan dengan perubahan kode.

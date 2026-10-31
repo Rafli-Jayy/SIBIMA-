@@ -12,7 +12,7 @@ def _limit_valid(limit: int, batas: int = 5000) -> int:
 
 
 def pemasukan_bulanan(limit: int = 24) -> list[dict]:
-    """Pemasukan berdasarkan waktu admin mengonfirmasi pembayaran lunas."""
+    """Pemasukan berdasarkan waktu simulasi pembayaran berhasil dan belum direfund."""
     limit = _limit_valid(limit, 120)
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -41,10 +41,10 @@ def siswa_per_program() -> list[dict]:
                        COUNT(DISTINCT e.student_id)
                            FILTER (WHERE e.status = 'aktif') AS siswa_aktif,
                        COUNT(DISTINCT e.student_id)
-                           FILTER (WHERE e.status = 'menunggu') AS menunggu,
+                           FILTER (WHERE e.status IN ('menunggu_pembayaran', 'menunggu')) AS menunggu,
                        GREATEST(
                            p.kuota - COUNT(DISTINCT e.student_id)
-                               FILTER (WHERE e.status IN ('aktif', 'menunggu')),
+                               FILTER (WHERE e.status IN ('aktif', 'menunggu', 'menunggu_pembayaran')),
                            0
                        ) AS kuota_tersisa
                 FROM programs AS p

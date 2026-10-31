@@ -11,6 +11,7 @@ from rich.text import Text
 from app import session
 from app.ui.console import console, bersihkan_layar, gagal, sukses
 from app.ui import menu_tutor_academic, menu_notifikasi
+from app.services import engagement_service
 
 _GAYA = Style([
     ("qmark", "fg:#00ffff bold"),
@@ -77,12 +78,21 @@ def jalankan():
         bersihkan_layar()
         _dashboard(pengguna)
 
+        try:
+            jumlah_belum_dibaca = engagement_service.jumlah_notifikasi_belum_dibaca("tutor")
+        except Exception:
+            jumlah_belum_dibaca = 0
+        label_notifikasi = (
+            f"  🔔  Notifikasi ({jumlah_belum_dibaca} belum dibaca)"
+            if jumlah_belum_dibaca > 0 else "  🔔  Notifikasi"
+        )
+
         choices = [Separator("────────── AKADEMIK ──────────")]
         choices.extend(
             Choice(f"  {index:02d}  {label}", value=kode)
             for index, (label, kode) in enumerate(_MENU_AKADEMIK, start=1)
         )
-        choices.append(Choice("  🔔  Notifikasi", value="notifikasi"))
+        choices.append(Choice(label_notifikasi, value="notifikasi"))
         choices.append(Separator("────────── AKUN ──────────────"))
         choices.extend(
             Choice(f"  {index:02d}  {label}", value=kode)

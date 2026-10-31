@@ -24,6 +24,11 @@ OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "3"))
 MAX_LOGIN_ATTEMPTS = int(os.getenv("MAX_LOGIN_ATTEMPTS", "3"))
 LOCK_MINUTES = int(os.getenv("LOCK_MINUTES", "5"))
 
+# Simulasi pembayaran: persentase keberhasilan (0-100), tanpa transaksi uang nyata.
+PAYMENT_SIMULATION_SUCCESS_RATE = int(os.getenv("PAYMENT_SIMULATION_SUCCESS_RATE", "90"))
+if not 0 <= PAYMENT_SIMULATION_SUCCESS_RATE <= 100:
+    raise ValueError("PAYMENT_SIMULATION_SUCCESS_RATE harus berada di antara 0 dan 100.")
+
 # Email
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))

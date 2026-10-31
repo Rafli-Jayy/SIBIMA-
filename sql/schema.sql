@@ -29,10 +29,10 @@ CREATE TYPE otp_purpose       AS ENUM ('register', 'reset_password', 'login');
 CREATE TYPE program_status    AS ENUM ('buka', 'tutup');
 CREATE TYPE nama_hari         AS ENUM ('senin', 'selasa', 'rabu', 'kamis',
                                        'jumat', 'sabtu', 'minggu');
-CREATE TYPE enrollment_status AS ENUM ('menunggu', 'aktif', 'ditolak', 'batal', 'selesai');
+CREATE TYPE enrollment_status AS ENUM ('menunggu_pembayaran', 'menunggu', 'aktif', 'ditolak', 'batal', 'selesai');
 CREATE TYPE invoice_status    AS ENUM ('belum_dibayar', 'lunas', 'batal');
 CREATE TYPE payment_status    AS ENUM ('menunggu_pembayaran', 'menunggu_konfirmasi',
-                                       'lunas', 'ditolak');
+                                       'lunas', 'ditolak', 'gagal', 'direfund');
 CREATE TYPE session_status    AS ENUM ('terlaksana', 'batal');
 CREATE TYPE attendance_status AS ENUM ('H', 'I', 'S', 'A');   -- Hadir, Izin, Sakit, Alpa
 CREATE TYPE grade_type        AS ENUM ('tugas', 'kuis', 'uts', 'uas');
@@ -222,17 +222,31 @@ CREATE INDEX idx_invoices_status ON invoices (status, jatuh_tempo);
 CREATE TABLE payments (
     id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     invoice_id   INT            NOT NULL REFERENCES invoices(id),
-    kode_bayar   VARCHAR(30)    NOT NULL UNIQUE,     -- nomor Virtual Account
+    kode_bayar   VARCHAR(30)    NOT NULL UNIQUE,     -- kode transaksi simulasi internal
     jumlah       NUMERIC(12,2)  NOT NULL CHECK (jumlah > 0),
     status       payment_status NOT NULL DEFAULT 'menunggu_pembayaran',
-    paid_at      TIMESTAMPTZ,                         -- saat siswa menekan "sudah bayar"
-    processed_by INT REFERENCES users(id),            -- admin yang mengonfirmasi
+    paid_at      TIMESTAMPTZ,                         -- waktu simulasi berhasil
+    processed_by INT REFERENCES users(id),            -- legacy: admin pemroses pembayaran lama
     processed_at TIMESTAMPTZ,
     alasan_tolak TEXT,
     created_at   TIMESTAMPTZ    NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_payments_invoice ON payments (invoice_id);
 CREATE INDEX idx_payments_status  ON payments (status, created_at);
+
+-- Pengembalian dana hanya berupa simulasi internal, tidak mengirim uang sungguhan.
+CREATE TABLE payment_refunds (
+    id          INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    payment_id  INT NOT NULL UNIQUE REFERENCES payments(id),
+    kode_refund VARCHAR(40) NOT NULL UNIQUE,
+    jumlah      NUMERIC(12,2) NOT NULL CHECK (jumlah > 0),
+    alasan      TEXT NOT NULL,
+    status      VARCHAR(20) NOT NULL DEFAULT 'berhasil'
+                CHECK (status IN ('berhasil', 'gagal')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_payment_refunds_status ON payment_refunds (status, created_at);
 
 -- Setiap percobaan pembayaran harus sebesar total tagihan penuh.
 CREATE FUNCTION fn_validate_full_payment() RETURNS TRIGGER AS $$
@@ -347,8 +361,8 @@ CREATE INDEX idx_logs_waktu ON activity_logs (created_at DESC);
 -- Sisa kuota tiap program (menunggu + aktif dihitung terisi)
 CREATE VIEW v_program_kuota AS
 SELECT p.id AS program_id, p.kode, p.nama, p.kuota,
-       COUNT(e.id) FILTER (WHERE e.status IN ('menunggu', 'aktif'))            AS terisi,
-       p.kuota - COUNT(e.id) FILTER (WHERE e.status IN ('menunggu', 'aktif'))  AS sisa
+       COUNT(e.id) FILTER (WHERE e.status IN ('menunggu_pembayaran', 'menunggu', 'aktif')) AS terisi,
+       p.kuota - COUNT(e.id) FILTER (WHERE e.status IN ('menunggu_pembayaran', 'menunggu', 'aktif')) AS sisa
 FROM programs p
 LEFT JOIN enrollments e ON e.program_id = p.id
 GROUP BY p.id;
@@ -365,9 +379,9 @@ JOIN enrollments e ON e.id = i.enrollment_id
 LEFT JOIN payments p ON p.invoice_id = i.id
 GROUP BY i.id, e.student_id;
 
--- Pemasukan per bulan (hanya pembayaran yang sudah dikonfirmasi)
+-- Pemasukan per bulan (pembayaran simulasi berhasil dan belum direfund)
 CREATE VIEW v_pemasukan_bulanan AS
-SELECT date_trunc('month', processed_at)::date AS bulan,
+SELECT date_trunc('month', paid_at)::date AS bulan,
        COUNT(*)    AS jumlah_transaksi,
        SUM(jumlah) AS total_pemasukan
 FROM payments

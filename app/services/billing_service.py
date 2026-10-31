@@ -19,9 +19,22 @@ def _pengguna_aktif(role: str) -> dict:
     return pengguna
 
 
-def buat_tagihan_bulanan() -> int:
+def buat_tagihan_bulanan() -> dict:
     admin = _pengguna_aktif("admin")
-    return billing_repo.buat_tagihan_bulanan(admin["id"])
+    invoices = billing_repo.buat_tagihan_bulanan(admin["id"])
+    from app.services import invoice_email_service
+    terkirim = 0
+    gagal = 0
+    for invoice in invoices:
+        ok, _pesan = invoice_email_service.kirim_email_tagihan_bulanan(
+            email=invoice.get("email_siswa"), nama=invoice.get("nama_siswa"),
+            nama_program=invoice.get("nama_program"), invoice=invoice,
+        )
+        if ok:
+            terkirim += 1
+        else:
+            gagal += 1
+    return {"dibuat": len(invoices), "email_terkirim": terkirim, "email_gagal": gagal}
 
 
 def daftar_tagihan_admin(status=None, tunggakan=False):
@@ -34,31 +47,23 @@ def daftar_tagihan_saya(status=None):
     return billing_repo.daftar_tagihan_siswa(siswa["id"], status=status)
 
 
-def mulai_pembayaran_va(invoice_id: int) -> dict:
+def bayar_simulasi(invoice_id: int) -> dict:
+    """Checkout simulasi otomatis untuk siswa; tidak memakai uang sungguhan."""
     siswa = _pengguna_aktif("siswa")
-    return billing_repo.mulai_pembayaran_va(siswa["id"], invoice_id)
-
-
-def konfirmasi_sudah_bayar(payment_id: int) -> dict:
-    siswa = _pengguna_aktif("siswa")
-    return billing_repo.siswa_konfirmasi_sudah_bayar(siswa["id"], payment_id)
-
-
-def daftar_konfirmasi_pembayaran():
-    _pengguna_aktif("admin")
-    return billing_repo.daftar_konfirmasi_pembayaran()
-
-
-def proses_konfirmasi_admin(payment_id: int, keputusan: str, alasan: str | None = None):
-    admin = _pengguna_aktif("admin")
-    if keputusan == "ditolak" and not (isinstance(alasan, str) and alasan.strip()):
-        raise ValueError("Alasan penolakan wajib diisi.")
-    return billing_repo.proses_pembayaran_admin(
-        payment_id=payment_id,
-        admin_id=admin["id"],
-        keputusan=keputusan,
-        alasan=alasan,
-    )
+    hasil = billing_repo.proses_simulasi_pembayaran(siswa["id"], invoice_id)
+    from app.services import billing_receipt_service
+    try:
+        if hasil.get("payment_status") == "lunas":
+            delivery = kirim_bukti_pembayaran_email(hasil["payment_id"])
+            email_ok, email_message = delivery["sent"], delivery["message"]
+        else:
+            email_ok, email_message = billing_receipt_service.kirim_email_simulasi_gagal(hasil)
+        hasil["email_sent"] = bool(email_ok)
+        hasil["email_message"] = email_message
+    except Exception as exc:
+        hasil["email_sent"] = False
+        hasil["email_message"] = f"Email notifikasi gagal ({type(exc).__name__})."
+    return hasil
 
 
 def riwayat_pembayaran_admin():

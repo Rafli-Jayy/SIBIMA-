@@ -1,387 +1,443 @@
-# Daftar Menu Tampilan CLI - BIMBEL CERDAS
+# Referensi Menu CLI SIBIMA
 
-Dokumen ini berisi rancangan menu untuk setiap peran. Menu memakai `questionary`:
-pilih dengan **panah atas/bawah**, lalu tekan **Enter**. Tampilan tabel dan panel
-memakai `rich`.
+Dokumen ini merangkum menu yang terhubung pada implementasi di `app/ui/`. Ini adalah referensi perilaku aplikasi saat ini, bukan daftar rencana fitur.
+
+Navigasi utama memakai `questionary`: gunakan tombol **↑/↓** lalu tekan **Enter**. Tampilan panel dan tabel memakai `rich`. Beberapa daftar panjang menggunakan halaman berikutnya/sebelumnya.
 
 ## Daftar isi
 
-1. [Menu awal (sebelum login)](#1-menu-awal-sebelum-login)
-2. [Admin](#2-admin)
-3. [Tutor](#3-tutor)
-4. [Siswa](#4-siswa)
-5. [Aturan tampilan umum](#5-aturan-tampilan-umum)
+1. [Menu awal dan autentikasi](#1-menu-awal-dan-autentikasi)
+2. [Menu Admin](#2-menu-admin)
+3. [Menu Tutor](#3-menu-tutor)
+4. [Menu Siswa](#4-menu-siswa)
+5. [Alur pembayaran](#5-alur-pembayaran)
+6. [Pengumuman dan notifikasi](#6-pengumuman-dan-notifikasi)
+7. [Aturan navigasi dan hak akses](#7-aturan-navigasi-dan-hak-akses)
 
 ---
 
-## 1. Menu awal (sebelum login)
+## 1. Menu awal dan autentikasi
 
-```
-╭──────────────────────────────────────────────╮
-│      BIMBEL CERDAS - SISTEM AKADEMIK         │
-╰──────────────────────────────────────────────╯
-? Menu utama  (gunakan panah atas/bawah)
- » Login
-   Register
-   Lupa Password
-   Keluar
+```text
+S I B I M A
+Menu awal
+ ├─ Login
+ ├─ Register
+ │   ├─ Siswa
+ │   └─ Tutor
+ ├─ Lupa Kata Sandi
+ └─ Keluar dari Aplikasi
 ```
 
-| Menu | Alur |
-|---|---|
-| Login | username + password -> menu sesuai peran |
-| Register | pilih **Siswa** atau **Tutor** -> isi data -> OTP -> menunggu konfirmasi admin |
-| Lupa Password | email -> OTP -> password baru |
-| Keluar | menutup program |
+### Login
+- Masukkan username dan password.
+- Sistem memeriksa status akun dan password.
+- Jika berhasil, pengguna diarahkan ke menu berdasarkan role: Admin, Tutor, atau Siswa.
+
+### Register
+- Pilih role Siswa atau Tutor.
+- Isi data akun yang diminta.
+- Verifikasi OTP.
+- Setelah OTP benar, akun menunggu konfirmasi Admin.
+
+### Lupa kata sandi
+- Masukkan email dan ikuti verifikasi OTP.
+- Buat password baru setelah verifikasi berhasil.
 
 ---
 
-## 2. Admin
+## 2. Menu Admin
 
-### 2.1 Menu utama
+Dashboard Admin menampilkan identitas pengguna dan modul administrasi.
 
-```
-╭──────────────────────────────────────────────╮
-│  DASHBOARD ADMIN                Halo, Rina   │
-│  Siswa aktif   : 128    Tutor     : 14       │
-│  Program aktif : 5      Pemasukan : Rp 38,5jt│
-│  Tunggakan     : 17 tagihan                  │
-│  Menunggu konfirmasi : 3 akun, 2 pendaftaran,│
-│                        1 pembayaran          │
-╰──────────────────────────────────────────────╯
-? Menu Admin
- » Pusat Konfirmasi (6)
-   Manajemen Akun
-   Data Siswa
-   Data Tutor
-   Program dan Ruang
-   Pendaftaran
-   Jadwal
-   Pembayaran
-   Laporan
-   Pengumuman
-   Log Aktivitas
-   Logout
+```text
+MENU ADMIN
+ ├─ Pusat Konfirmasi
+ ├─ Manajemen Akun
+ ├─ Data Siswa
+ ├─ Data Tutor
+ ├─ Program dan Ruang
+ ├─ Pendaftaran
+ ├─ Jadwal
+ ├─ Pembayaran
+ ├─ Laporan
+ ├─ Komunikasi
+ ├─ Log Aktivitas
+ └─ Logout
 ```
 
-Angka di sebelah **Pusat Konfirmasi** adalah jumlah item yang menunggu persetujuan.
+### 2.1 Pusat Konfirmasi
 
-### 2.2 Submenu
-
-**Pusat Konfirmasi**
-
-```
- ├─ Pendaftaran akun (siswa/tutor)    [3]  -> detail -> Setujui / Tolak (+alasan)
- ├─ Pendaftaran siswa ke program      [2]  -> detail -> Setujui / Tolak
- ├─ Pembayaran                        [1]  -> detail -> Setujui / Tolak
+```text
+PUSAT KONFIRMASI
+ ├─ Akun siswa/tutor
+ │   ├─ Lihat daftar pendaftar
+ │   ├─ Buka detail akun
+ │   ├─ Setujui akun
+ │   └─ Tolak akun (dengan alasan)
+ ├─ Pendaftaran program bimbel
+ │   ├─ Lihat pendaftaran yang menunggu
+ │   ├─ Buka detail pendaftaran
+ │   ├─ Terima pendaftaran
+ │   └─ Tolak pendaftaran (dengan alasan)
  └─ Kembali
 ```
 
-**Manajemen Akun**
+Catatan:
+- Persetujuan akun berbeda dari persetujuan pendaftaran program.
+- Pendaftaran program berbayar masuk antrean setelah pembayaran simulasi berhasil.
+- Program gratis langsung masuk antrean Admin tanpa invoice.
+- Admin memutuskan menerima/menolak pendaftaran; Admin tidak mengonfirmasi pembayaran simulasi.
 
-```
- ├─ Daftar semua akun (filter role / status)
+### 2.2 Manajemen Akun
+
+```text
+MANAJEMEN AKUN
+ ├─ Daftar semua akun (filter role/status)
  ├─ Nonaktifkan / aktifkan akun
  ├─ Buka kunci akun
- ├─ Reset password
+ ├─ Reset password akun
  └─ Kembali
 ```
 
-**Data Siswa**
+### 2.3 Data Siswa
 
-```
- ├─ Lihat daftar
- ├─ Cari (nama / NIS)
+```text
+DATA SISWA
+ ├─ Lihat daftar siswa
+ ├─ Cari siswa (nama / NIS)
  ├─ Filter (jenjang / program / status)
- ├─ Lihat detail
- ├─ Ubah data
- ├─ Nonaktifkan
+ ├─ Lihat detail siswa dan riwayat program
+ ├─ Ubah data siswa
+ ├─ Nonaktifkan akun siswa
  └─ Kembali
 ```
 
-> Tidak ada menu "Tambah siswa". Akun siswa dan tutor hanya lahir dari **Register**.
+Akun Siswa dibuat melalui Register, bukan melalui menu tambah siswa manual.
 
-**Data Tutor**
+### 2.4 Data Tutor
 
-```
- ├─ Lihat daftar
+```text
+DATA TUTOR
+ ├─ Lihat daftar tutor
  ├─ Lihat detail dan jadwal mengajar
- ├─ Ubah data
- ├─ Nonaktifkan
+ ├─ Ubah data tutor
+ ├─ Nonaktifkan akun tutor
  └─ Kembali
 ```
 
-**Program dan Ruang**
+### 2.5 Program dan Ruang
 
-```
- ├─ Daftar program (kuota terisi / sisa)
+```text
+PROGRAM DAN RUANG
+ ├─ Daftar program (terisi / sisa kuota)
  ├─ Tambah program
- ├─ Ubah program (harga, kuota, bobot nilai)
+ ├─ Ubah program (kode, nama, jenjang, deskripsi,
+ │                harga bulanan, kuota, bobot nilai)
  ├─ Tutup / buka program
  ├─ Daftar ruang
- ├─ Tambah / ubah ruang
+ ├─ Tambah ruang
+ ├─ Ubah ruang
  └─ Kembali
 ```
 
-**Pendaftaran**
+Bobot nilai terdiri dari tugas, kuis, UTS, dan UAS; total bobot harus 100%.
 
-```
+### 2.6 Pendaftaran
+
+```text
+PENDAFTARAN
  ├─ Daftar pendaftaran (filter status / program)
  ├─ Pindahkan siswa ke program lain
  ├─ Batalkan pendaftaran
  └─ Kembali
 ```
 
-**Jadwal**
+Status pendaftaran yang ditampilkan mencakup menunggu, aktif, ditolak, dibatalkan, dan selesai. Pembatalan mengubah status; riwayat tidak dihapus.
 
-```
- ├─ Lihat jadwal (per program / tutor / ruang / hari)
- ├─ Tambah jadwal   (bentrok tutor atau ruang ditolak otomatis)
+### 2.7 Jadwal
+
+```text
+JADWAL
+ ├─ Lihat jadwal (semua / per program / tutor / ruang / hari)
+ ├─ Tambah jadwal
  ├─ Ubah jadwal
  ├─ Nonaktifkan jadwal
  └─ Kembali
 ```
 
-**Pembayaran**
+Database mencegah bentrok waktu tutor dan ruang melalui exclusion constraint.
 
-```
+### 2.8 Pembayaran Admin
+
+```text
+PEMBAYARAN ADMIN
  ├─ Buat tagihan bulanan
  ├─ Daftar tagihan (filter status)
  ├─ Daftar tunggakan
  ├─ Riwayat pembayaran
- ├─ Cetak / unduh bukti pembayaran (PDF)
- ├─ Kirim bukti pembayaran ke email siswa
+ ├─ Unduh bukti pembayaran (PDF)
+ ├─ Kirim bukti pembayaran via email
  └─ Kembali
 ```
 
-**Laporan**
+Admin memantau tagihan dan riwayat. Pembayaran bulanan diproses melalui simulasi otomatis dari sisi siswa, bukan melalui persetujuan pembayaran manual oleh Admin.
 
-```
+### 2.9 Laporan
+
+```text
+LAPORAN
  ├─ Pemasukan per bulan
  ├─ Siswa per program
  ├─ Rekap kehadiran
  ├─ Rata-rata nilai per program
- ├─ Ekspor ke CSV
+ ├─ Ekspor laporan ke CSV
+ ├─ Ekspor laporan ke Excel (.xlsx)
  └─ Kembali
 ```
 
-**Pengumuman**
+### 2.10 Komunikasi
 
-```
- ├─ Buat pengumuman
- ├─ Daftar pengumuman
+```text
+KOMUNIKASI
+ ├─ Buat Pengumuman
+ ├─ Pengumuman Aktif
+ ├─ Arsip Pengumuman
  └─ Kembali
 ```
 
-**Log Aktivitas**
+Saat membuat pengumuman, Admin memilih minimal satu penerima: Siswa, Tutor, atau keduanya. Pengumuman aktif dapat dibuka detailnya dan diarsipkan. Pengumuman yang telah diarsipkan tidak ditampilkan sebagai notifikasi aktif.
 
-```
+### 2.11 Log Aktivitas
+
+```text
+LOG AKTIVITAS
  ├─ Aktivitas terbaru
- ├─ Filter (pengguna / aksi)
+ ├─ Filter berdasarkan pengguna / aksi
  └─ Kembali
 ```
 
 ---
 
-## 3. Tutor
+## 3. Menu Tutor
 
-### 3.1 Menu utama
-
-```
-╭──────────────────────────────────────────────╮
-│  DASHBOARD TUTOR              Halo, Ani Wulan│
-│  Kelas diampu : 3        Total siswa : 58    │
-│  Jadwal hari ini:                            │
-│    15:00-16:30  UTBK Intensif     (R-2)      │
-│    18:00-19:30  Matematika SMP    (R-1)      │
-╰──────────────────────────────────────────────╯
-? Menu Tutor
- » Jadwal Mengajar
-   Kelas dan Siswa
-   Absensi
-   Nilai
-   Catatan Materi
-   Profil
-   Logout
+```text
+MENU TUTOR
+ ├─ Jadwal Mengajar
+ ├─ Kelas dan Siswa
+ ├─ Absensi
+ ├─ Nilai
+ ├─ Catatan Materi
+ ├─ Notifikasi
+ ├─ Profil Saya
+ └─ Logout
 ```
 
-### 3.2 Submenu
+### 3.1 Jadwal Mengajar
+- Lihat jadwal hari ini.
+- Lihat jadwal mingguan.
 
-**Jadwal Mengajar**
+### 3.2 Kelas dan Siswa
+- Pilih kelas yang diampu.
+- Lihat daftar siswa pada kelas tersebut.
+- Buka detail siswa dalam kelas yang menjadi tanggung jawab Tutor.
 
-```
- ├─ Jadwal hari ini
- ├─ Jadwal mingguan
- └─ Kembali
-```
+### 3.3 Absensi
+- Buka pertemuan baru (nomor pertemuan otomatis).
+- Isi atau ubah absensi pertemuan.
+- Lihat rekap absensi per siswa.
+- Kode absensi: `H` (Hadir), `I` (Izin), `S` (Sakit), `A` (Alpa).
 
-**Kelas dan Siswa**
+### 3.4 Nilai
+- Input nilai siswa.
+- Ubah nilai yang pernah diinput.
+- Lihat nilai kelas dan nilai akhir berbobot.
+- Jenis nilai: tugas, kuis (input manual), UTS, dan UAS.
+- Nilai berada pada rentang 0–100.
 
-```
- ├─ Pilih kelas -> daftar siswa (NIS, nama, rata-rata, kehadiran)
- ├─ Detail siswa (hanya siswa di kelasnya)
- └─ Kembali
-```
+### 3.5 Catatan Materi
+- Tulis atau ubah topik dan ringkasan pertemuan.
+- Lihat daftar catatan sebelumnya.
 
-**Absensi**
+### 3.6 Notifikasi
+- Lihat pengumuman aktif yang ditujukan kepada Tutor.
+- Notifikasi yang belum dibaca ditandai `BARU`.
+- Membuka detail mencatat status baca untuk akun Tutor tersebut.
 
-```
- ├─ Buka pertemuan baru   (nomor pertemuan otomatis)
- ├─ Isi absensi           [H]adir  [I]zin  [S]akit  [A]lpa
- ├─ Ubah absensi pertemuan sebelumnya
- ├─ Rekap absensi per siswa
- └─ Kembali
-```
+### 3.7 Profil Saya
+- Lihat profil.
+- Ubah keahlian dan nomor HP.
+- Ganti password.
 
-**Nilai**
-
-```
- ├─ Input nilai   (pilih siswa -> jenis: tugas / kuis / UTS / UAS)
- ├─ Ubah nilai
- ├─ Lihat nilai kelas (dengan nilai akhir berbobot)
- └─ Kembali
-```
-
-Catatan: jenis nilai `kuis` tetap dapat diinput tutor secara manual; modul kuis mandiri, soal, dan riwayat pengerjaan dihapus.
-
-**Catatan Materi**
-
-```
- ├─ Tulis topik dan ringkasan pertemuan
- ├─ Daftar catatan sebelumnya
- └─ Kembali
-```
-
-**Profil**
-
-```
- ├─ Lihat profil
- ├─ Ubah profil (keahlian, nomor HP)
- ├─ Ganti password
- └─ Kembali
-```
+Tutor hanya boleh mengakses kelas dan siswa yang menjadi tanggung jawabnya. Pemeriksaan hak akses dilakukan di service, bukan hanya dengan menyembunyikan pilihan menu.
 
 ---
 
-## 4. Siswa
+## 4. Menu Siswa
 
-### 4.1 Menu utama
-
-```
-╭──────────────────────────────────────────────╮
-│  DASHBOARD SISWA          Halo, Budi Santoso │
-│  Jadwal hari ini : 15:00 UTBK Intensif (R-2) │
-│  Tagihan         : Rp 450.000 jatuh tempo 5/11│
-│  Pengumuman terbaru : 3 ditampilkan          │
-╰──────────────────────────────────────────────╯
-? Menu Siswa
- » Katalog Program
-   Kelas Saya
-   Jadwal
-   Absensi
-   Nilai dan Rapor
-   Pembayaran
-   Catatan Materi
-   Tanya AI            (opsional)
-   Profil
-   Logout
+```text
+MENU SISWA
+ ├─ Katalog Program
+ ├─ Kelas Saya
+ ├─ Jadwal Saya
+ ├─ Absensi
+ ├─ Nilai dan Rapor
+ ├─ Tagihan dan Pembayaran
+ ├─ Catatan Materi
+ ├─ Notifikasi
+ ├─ Tanya AI (informasi fitur; belum diaktifkan)
+ ├─ Profil Saya
+ └─ Logout
 ```
 
-### 4.2 Submenu
+### 4.1 Katalog Program
+- Lihat program yang tersedia.
+- Lihat detail program.
+- Daftar ke program.
+- Sistem memeriksa status program, kuota, dan apakah siswa sudah terdaftar.
 
-**Katalog Program**
+### 4.2 Kelas Saya
+- Lihat program/pendaftaran milik sendiri.
+- Lihat status pendaftaran dan informasi kelas yang tersedia.
 
-```
- ├─ Lihat program tersedia (harga, sisa kuota)
- ├─ Detail program
- ├─ Daftar ke program  -> status "menunggu persetujuan admin"
- └─ Kembali
-```
+### 4.3 Jadwal Saya
+- Lihat jadwal hari ini.
+- Lihat jadwal mingguan.
+- Filter jadwal berdasarkan program.
 
-**Kelas Saya**
+### 4.4 Absensi
+- Lihat riwayat kehadiran per program.
+- Lihat persentase kehadiran.
 
-```
- ├─ Program yang diikuti (tutor, status pendaftaran)
- └─ Kembali
-```
+### 4.5 Nilai dan Rapor
+- Lihat nilai.
+- Lihat rincian nilai.
+- Cetak rapor ke file TXT.
 
-**Jadwal**
+### 4.6 Tagihan dan Pembayaran
+- Lihat tagihan dan statusnya.
+- Checkout simulasi melalui `Bayar Sekarang`.
+- Lihat riwayat pembayaran.
+- Unduh bukti pembayaran PDF.
+- Kirim bukti pembayaran ke email terdaftar.
 
-```
- ├─ Jadwal hari ini
- ├─ Jadwal mingguan
- └─ Kembali
-```
+### 4.7 Catatan Materi
+- Pilih program.
+- Lihat catatan/topik dan ringkasan pertemuan yang tersedia.
 
-**Absensi**
+### 4.8 Notifikasi
+- Lihat pengumuman aktif yang ditujukan kepada Siswa.
+- Jumlah notifikasi belum dibaca muncul pada label menu jika lebih dari nol.
+- Notifikasi belum dibaca ditandai `BARU`.
+- Membuka detail mencatat status baca untuk akun Siswa tersebut.
 
-```
- ├─ Riwayat kehadiran per program
- ├─ Persentase kehadiran
- └─ Kembali
-```
+### 4.9 Tanya AI
+- Fitur opsional.
+- Saat ini hanya menampilkan informasi bahwa integrasi Gemini belum diaktifkan.
+- Mengisi `GEMINI_API_KEY` saja belum membuat fitur Tanya AI berfungsi.
 
-**Nilai dan Rapor**
+### 4.10 Profil Saya
+- Lihat profil.
+- Lengkapi atau ubah jenjang, sekolah, nomor HP, dan nama wali.
+- Ganti password.
 
-```
- ├─ Nilai per mata pelajaran
- ├─ Nilai akhir dan tren (naik / turun)
- ├─ Cetak rapor (TXT)
- └─ Kembali
-```
-
-**Pembayaran**
-
-```
- ├─ Tagihan saya (status)
- ├─ Bayar tagihan -> nomor Virtual Account -> "Saya sudah membayar"
- ├─ Riwayat pembayaran
- ├─ Unduh bukti pembayaran (PDF)
- ├─ Kirim bukti pembayaran ke email terdaftar
- └─ Kembali
-```
-
-**Catatan Materi**
-
-```
- ├─ Pilih program -> daftar catatan pertemuan
- └─ Kembali
-```
-
-**Tanya AI** (opsional, Gemini)
-
-```
- ├─ Mulai tanya jawab    (ketik 'keluar' untuk berhenti)
- └─ Kembali
-```
-
-**Profil**
-
-```
- ├─ Lihat profil
- ├─ Lengkapi / ubah profil (jenjang, sekolah, nomor HP, nama wali)
- ├─ Ganti password
- └─ Kembali
-```
+Siswa hanya boleh melihat data miliknya sendiri. Pemeriksaan kepemilikan data dilakukan di service.
 
 ---
 
-## 5. Aturan tampilan umum
+## 5. Alur pembayaran
 
-| Aturan | Keterangan |
-|---|---|
-| Navigasi | Setiap layar punya pilihan **Kembali**, menu utama punya **Logout** |
-| Tabel panjang | Dibagi per halaman, dengan opsi cari atau filter |
-| Aksi berbahaya | Nonaktifkan, tolak, dan batalkan selalu meminta konfirmasi y/n |
-| Ikon status | ✓ hijau berhasil, ✗ merah gagal, ! kuning peringatan, i biru info |
-| Notifikasi | Angka di menu **Pusat Konfirmasi** menunjukkan item yang menunggu |
-| Hak akses | Menu hanya menampilkan fitur sesuai peran; pengecekan peran tetap dilakukan di lapisan `services` |
-| Pembatalan | Tombol Ctrl+C atau pembatalan prompt kembali ke menu sebelumnya, bukan menutup program |
+### 5.1 Pendaftaran program berbayar
 
-## Ringkasan jumlah menu
+```text
+Siswa pilih program
+      ↓
+Konfirmasi pendaftaran
+      ↓
+Enrollment + invoice pertama dibuat
+      ↓
+Bayar Sekarang
+      ↓
+Simulasi internal otomatis
+   ┌──┴──┐
+   ↓     ↓
+Lunas  Gagal
+   ↓     ↓
+Masuk  Invoice tetap
+antrean belum dibayar
+Admin  dan bisa dicoba lagi
+   ↓
+Admin terima / tolak
+```
 
-| Peran | Menu utama | Submenu |
+- Pendaftaran berbayar membuat invoice sebelum keputusan Admin.
+- Pembayaran berhasil mengubah invoice/payment menjadi `lunas` dan enrollment menjadi `menunggu`.
+- Pembayaran gagal tidak membuat invoice menjadi lunas.
+- Jika Admin menerima, enrollment menjadi `aktif`.
+- Jika Admin menolak setelah pembayaran lunas, refund dicatat sebagai simulasi terpisah.
+
+### 5.2 Program gratis
+Program dengan harga nol tidak membuat invoice/payment. Enrollment langsung masuk antrean keputusan Admin.
+
+### 5.3 Pembayaran bulanan
+Admin membuat tagihan untuk enrollment aktif. Siswa melakukan checkout simulasi. Tidak ada tahap konfirmasi pembayaran bulanan oleh Admin.
+
+### 5.4 Status yang penting
+
+| Objek | Status | Makna |
 |---|---|---|
-| Admin | 11 menu + Logout | 11 kelompok |
-| Tutor | 6 menu + Logout | 6 kelompok |
-| Siswa | 9 menu + Logout | 9 kelompok |
+| Enrollment | `menunggu_pembayaran` | Menunggu pembayaran awal |
+| Enrollment | `menunggu` | Menunggu keputusan Admin |
+| Enrollment | `aktif` | Pendaftaran diterima |
+| Enrollment | `ditolak` | Pendaftaran ditolak |
+| Invoice | `belum_dibayar` | Tagihan belum lunas |
+| Invoice | `lunas` | Tagihan lunas menurut simulasi |
+| Invoice | `batal` | Tagihan dibatalkan |
+| Payment | `lunas` | Simulasi pembayaran berhasil |
+| Payment | `gagal` | Simulasi pembayaran gagal |
+| Payment | `direfund` | Pembayaran direfund secara simulasi |
+| Refund | `berhasil` / `gagal` | Hasil proses refund simulasi |
+
+> Tidak ada uang sungguhan yang berpindah. Status `lunas` dan `direfund` merupakan hasil simulasi internal.
+
+---
+
+## 6. Pengumuman dan notifikasi
+
+- Admin membuat pengumuman dari menu Komunikasi.
+- Penerima dapat dipilih sebagai Siswa, Tutor, atau keduanya.
+- Pengumuman ditampilkan pada menu Notifikasi masing-masing role.
+- Status baca disimpan per user.
+- Label `BARU` dan jumlah belum dibaca hanya berlaku untuk akun yang sedang login.
+- Admin dapat mengarsipkan pengumuman aktif.
+- Arsip tidak ditampilkan pada daftar notifikasi Siswa/Tutor dan tidak memiliki menu pemulihan.
+
+---
+
+## 7. Aturan navigasi dan hak akses
+
+| Aturan | Perilaku |
+|---|---|
+| Navigasi | Gunakan ↑/↓ dan Enter pada pilihan Questionary |
+| Kembali | Submenu menyediakan pilihan kembali ke menu sebelumnya |
+| Logout | Menutup sesi pengguna dan kembali ke alur awal |
+| Daftar panjang | Beberapa daftar/tabel menggunakan pagination |
+| Hak akses | Menu disesuaikan dengan role; service tetap memeriksa hak akses |
+| Data siswa | Siswa hanya dapat melihat data miliknya |
+| Data tutor | Tutor hanya dapat mengakses kelas dan siswa yang ditugaskan |
+| Pengumuman | Siswa/Tutor hanya melihat pengumuman aktif yang ditargetkan ke rolenya |
+| Pembayaran | Checkout adalah simulasi internal, bukan pembayaran nyata |
+
+### Fitur yang tidak termasuk pada versi menu ini
+
+Dokumen ini tidak mencantumkan fitur yang sudah tidak tersedia pada implementasi saat ini, antara lain:
+- Kuis mandiri, bank soal, dan riwayat pengerjaan kuis.
+- Rating tutor dan feedback siswa.
+- Permohonan izin dan pengajuan perubahan jadwal.
+- Penggajian/honor tutor.
+
+Jenis nilai `kuis` masih tersedia sebagai input nilai manual oleh Tutor. Hal tersebut tidak berarti modul kuis mandiri tersedia.
+
+---
+
+Dokumen ini diselaraskan dengan menu pada `app/ui/menu_auth.py`, `menu_admin.py`, `menu_admin_data.py`, `menu_admin_komunikasi.py`, `menu_admin_laporan.py`, `menu_pembayaran.py`, `menu_tutor.py`, `menu_tutor_academic.py`, `menu_siswa.py`, `menu_siswa_academic.py`, dan `menu_notifikasi.py` pada arsip proyek yang diaudit.

@@ -72,8 +72,8 @@ def setujui_akun(user_id: int):
     if target["role"] == "siswa":
         detail = (
             f"NIS: {identitas or '-'}\n"
-            "Akun siswa telah disetujui. Pendaftaran program, jika ada, "
-            "tetap menunggu persetujuan admin secara terpisah."
+            "Akun siswa telah disetujui. Pendaftaran program dilakukan terpisah; "
+            "invoice berbayar akan dibuat otomatis saat siswa mendaftar."
         )
         pesan = f"Akun siswa {target['username']} disetujui."
         if identitas:
@@ -185,94 +185,37 @@ def _format_rupiah(nilai) -> str:
 
 
 def setujui_enrollment(enrollment_id: int):
-    """Setujui pendaftaran program dan buat tagihan pertama dalam transaksi."""
+    """Setujui enrollment yang sudah lunas (atau program gratis)."""
     admin = _admin_aktif()
     if admin is None:
         return False, "Akses ditolak. Hanya admin aktif yang dapat menyetujui."
     if type(enrollment_id) is not int or enrollment_id <= 0:
         return False, "ID pendaftaran tidak valid."
-
     try:
         hasil = enrollment_repo.proses_keputusan_admin(
-            enrollment_id=enrollment_id,
-            processed_by=admin["id"],
-            keputusan="disetujui",
+            enrollment_id=enrollment_id, processed_by=admin["id"], keputusan="disetujui",
         )
-    except ValueError as exc:
-        return False, str(exc)
-    except (psycopg.Error, RuntimeError) as exc:
-        return False, (
-            "Persetujuan dan pembuatan tagihan gagal. Transaksi dibatalkan "
-            f"({type(exc).__name__}). Silakan periksa database lalu coba lagi."
-        )
-
+    except (ValueError, psycopg.Error, RuntimeError) as exc:
+        return False, f"Persetujuan pendaftaran gagal ({type(exc).__name__}): {exc}"
     if not hasil.get("berhasil"):
         return False, hasil.get("pesan", "Pendaftaran tidak dapat disetujui.")
-
+    siswa = user_repo.cari_by_id(hasil["student_id"])
+    if not siswa:
+        return True, f"Pendaftaran {hasil['nama_program']} aktif, tetapi data email siswa tidak ditemukan."
+    detail = f"Program: {hasil['nama_program']}\nStatus: Aktif"
     try:
-        siswa = user_repo.cari_by_id(hasil["student_id"])
-    except psycopg.Error:
-        siswa = None
-    invoice = hasil.get("invoice")
-    if invoice:
-        pesan_tagihan = (
-            f" Invoice {invoice['no_invoice']} sebesar "
-            f"{_format_rupiah(invoice['jumlah'])}, jatuh tempo "
-            f"{invoice['jatuh_tempo'].strftime('%d-%m-%Y')}."
+        terkirim = email_service.kirim_notifikasi_status(
+            email=siswa["email"], nama=siswa["nama_lengkap"], kategori="pendaftaran",
+            status="aktif", detail=detail,
         )
-    else:
-        pesan_tagihan = " Program gratis, tidak dibuat tagihan."
-
-    if siswa is None:
-        return True, (
-            f"Pendaftaran {hasil['nama_program']} berhasil disetujui, "
-            "tetapi data pengguna siswa tidak ditemukan setelah proses."
-            + pesan_tagihan
-        )
-
-    if invoice:
-        # Repository sudah commit enrollment aktif dan invoice terlebih dahulu.
-        # Pengiriman SMTP dilakukan sesudah transaksi agar kegagalan email tidak
-        # membatalkan persetujuan atau membuat admin menyetujui dua kali.
-        try:
-            terkirim, detail_pengiriman = invoice_email_service.kirim_email_invoice_pendaftaran(
-                email=siswa["email"],
-                nama=siswa["nama_lengkap"],
-                nama_program=hasil["nama_program"],
-                invoice=invoice,
-            )
-        except Exception as exc:
-            terkirim = False
-            detail_pengiriman = f"Pengiriman invoice gagal ({type(exc).__name__})."
-    else:
-        # Program gratis tetap mendapat email status, tanpa membuat invoice PDF.
-        try:
-            terkirim = email_service.kirim_notifikasi_status(
-                email=siswa["email"],
-                nama=siswa["nama_lengkap"],
-                kategori="pendaftaran",
-                status="aktif",
-                detail=f"Program: {hasil['nama_program']}\nProgram gratis; tidak ada tagihan.",
-            )
-            detail_pengiriman = "Email status pendaftaran diproses melalui SMTP."
-        except Exception as exc:
-            terkirim = False
-            detail_pengiriman = f"Email notifikasi gagal ({type(exc).__name__})."
-
-    pesan = f"Pendaftaran {hasil['nama_program']} disetujui.{pesan_tagihan}"
-    if not terkirim:
-        return True, pesan + " Email invoice/notifikasi gagal dikirim. " + detail_pengiriman
-    if invoice:
-        return True, (
-            pesan + " Invoice PDF telah dibuat dan email invoice diterima server SMTP. "
-            "Jika siswa tidak menemukannya, periksa folder Spam. " + detail_pengiriman
-        )
-    return True, pesan + " Email pemberitahuan diproses melalui SMTP."
-
+    except Exception:
+        terkirim = False
+    pesan = f"Pendaftaran {hasil['nama_program']} diterima dan siswa sekarang aktif."
+    return True, pesan + (" Email konfirmasi dikirim." if terkirim else " Email konfirmasi gagal dikirim; status tetap aktif.")
 
 
 def tolak_enrollment(enrollment_id: int, alasan: str):
-    """Tolak pendaftaran program dengan alasan dan pencatatan admin."""
+    """Tolak pendaftaran; refund simulasi otomatis jika pembayaran sudah lunas."""
     admin = _admin_aktif()
     if admin is None:
         return False, "Akses ditolak. Hanya admin aktif yang dapat menolak."
@@ -280,40 +223,54 @@ def tolak_enrollment(enrollment_id: int, alasan: str):
         return False, "ID pendaftaran tidak valid."
     if not isinstance(alasan, str) or not alasan.strip():
         return False, "Alasan penolakan wajib diisi."
-
     alasan = alasan.strip()
     try:
         hasil = enrollment_repo.proses_keputusan_admin(
-            enrollment_id=enrollment_id,
-            processed_by=admin["id"],
-            keputusan="ditolak",
-            alasan_tolak=alasan,
+            enrollment_id=enrollment_id, processed_by=admin["id"],
+            keputusan="ditolak", alasan_tolak=alasan,
         )
-    except ValueError as exc:
-        return False, str(exc)
-    except psycopg.Error as exc:
-        return False, f"Terjadi kesalahan database saat menolak pendaftaran ({type(exc).__name__})."
-
+    except (ValueError, psycopg.Error, RuntimeError) as exc:
+        return False, f"Penolakan pendaftaran gagal ({type(exc).__name__}): {exc}"
     if not hasil.get("berhasil"):
         return False, hasil.get("pesan", "Pendaftaran tidak dapat ditolak.")
 
     siswa = user_repo.cari_by_id(hasil["student_id"])
+    refunds = hasil.get("refunds") or []
     if siswa is None:
-        return True, f"Pendaftaran {hasil['nama_program']} ditolak; data pengguna siswa tidak ditemukan."
+        return True, f"Pendaftaran ditolak. {len(refunds)} refund simulasi tercatat; email siswa tidak ditemukan."
+
+    if refunds:
+        from app.services import billing_receipt_service
+        semua_email_ok = True
+        detail_email = []
+        for refund in refunds:
+            refund_detail = {
+                **refund, "nama_siswa": siswa.get("nama_lengkap"),
+                "email_siswa": siswa.get("email"), "nama_program": hasil["nama_program"],
+                "alasan": alasan,
+            }
+            try:
+                pdf = billing_receipt_service.buat_pdf_bukti_refund(refund_detail)
+                email_ok, email_message = billing_receipt_service.kirim_pdf_refund_via_email(refund_detail, pdf)
+                semua_email_ok = semua_email_ok and email_ok
+                detail_email.append(email_message)
+            except Exception as exc:
+                semua_email_ok = False
+                detail_email.append(f"Dokumen/email refund gagal ({type(exc).__name__}).")
+        pesan = f"Pendaftaran {hasil['nama_program']} ditolak. {len(refunds)} refund simulasi berhasil dicatat."
+        if semua_email_ok:
+            pesan += " Email penolakan dan PDF refund dikirim."
+        else:
+            pesan += " Refund tetap tercatat, tetapi email/PDF perlu diperiksa: " + "; ".join(detail_email)
+        return True, pesan
 
     try:
         terkirim = email_service.kirim_notifikasi_status(
-            email=siswa["email"],
-            nama=siswa["nama_lengkap"],
-            kategori="pendaftaran",
-            status="ditolak",
-            detail=f"Program: {hasil['nama_program']}\nAlasan: {alasan}",
+            email=siswa["email"], nama=siswa["nama_lengkap"], kategori="pendaftaran",
+            status="ditolak", detail=f"Program: {hasil['nama_program']}\nAlasan: {alasan}",
         )
     except Exception:
         terkirim = False
-
     pesan = f"Pendaftaran {hasil['nama_program']} ditolak. Alasan tersimpan."
-    if not terkirim:
-        return True, pesan + " Email notifikasi gagal dikirim."
-    return True, pesan + " Email pemberitahuan telah dikirim."
+    return True, pesan + (" Email pemberitahuan dikirim." if terkirim else " Email pemberitahuan gagal dikirim; data tetap tersimpan.")
 

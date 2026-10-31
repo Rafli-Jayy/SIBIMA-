@@ -28,11 +28,17 @@ def jalankan(role: str) -> None:
             border_style="cyan", padding=(1, 2), expand=True,
         ))
         try:
+            jumlah_belum_dibaca = engagement_service.jumlah_notifikasi_belum_dibaca(role)
             daftar = engagement_service.daftar_notifikasi(role)
         except (psycopg.Error, PermissionError, ValueError) as exc:
             gagal(f"Notifikasi gagal dimuat ({type(exc).__name__}).")
             input("\nTekan Enter untuk kembali...")
             return
+
+        console.print(
+            f"[bold yellow]Belum dibaca: {jumlah_belum_dibaca}[/bold yellow]"
+            if jumlah_belum_dibaca else "[dim]Tidak ada notifikasi baru.[/dim]"
+        )
 
         tabel = Table(show_header=True, header_style="bold cyan", expand=True)
         tabel.add_column("Status", width=14)

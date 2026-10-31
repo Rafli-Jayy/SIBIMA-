@@ -7,6 +7,7 @@ from app.repositories.billing_repo import buat_invoice_awal
 
 
 STATUS_ENROLLMENT_VALID = {
+    "menunggu_pembayaran",
     "menunggu",
     "aktif",
     "ditolak",
@@ -19,7 +20,7 @@ def kunci_program(cur, program_id: int):
     """Kunci baris program selama transaksi pendaftaran berlangsung."""
     cur.execute(
         """
-        SELECT id, kode, nama, status, kuota
+        SELECT id, kode, nama, status, kuota, harga_bulanan
         FROM programs
         WHERE id = %s
         FOR UPDATE;
@@ -39,7 +40,7 @@ def hitung_terisi(program_id: int, cur=None) -> int:
         SELECT COUNT(*) AS jumlah
         FROM enrollments
         WHERE program_id = %s
-          AND status IN ('menunggu', 'aktif');
+          AND status IN ('menunggu_pembayaran', 'menunggu', 'aktif');
     """
 
     if cur is not None:
@@ -61,10 +62,15 @@ def buat_enrollment(student_id: int, program_id: int):
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                "SELECT user_id FROM students WHERE user_id = %s;",
+                """
+                SELECT s.user_id, u.nama_lengkap, u.email, s.nis
+                FROM students s JOIN users u ON u.id = s.user_id
+                WHERE s.user_id = %s;
+                """,
                 (student_id,),
             )
-            if cur.fetchone() is None:
+            siswa = cur.fetchone()
+            if siswa is None:
                 return {"berhasil": False, "alasan": "siswa_tidak_ditemukan"}
 
             program = kunci_program(cur, program_id)
@@ -95,15 +101,23 @@ def buat_enrollment(student_id: int, program_id: int):
             if terisi >= program["kuota"]:
                 return {"berhasil": False, "alasan": "kuota_penuh"}
 
+            status_awal = "menunggu_pembayaran" if program.get("harga_bulanan", 0) > 0 else "menunggu"
             cur.execute(
                 """
                 INSERT INTO enrollments (student_id, program_id, status)
-                VALUES (%s, %s, 'menunggu')
+                VALUES (%s, %s, %s)
                 RETURNING id, status;
                 """,
-                (student_id, program_id),
+                (student_id, program_id, status_awal),
             )
             hasil = cur.fetchone()
+            invoice = None
+            if program.get("harga_bulanan", 0) > 0:
+                invoice = buat_invoice_awal(
+                    cur=cur,
+                    enrollment_id=hasil["id"],
+                    jumlah=program["harga_bulanan"],
+                )
 
         conn.commit()
 
@@ -111,6 +125,13 @@ def buat_enrollment(student_id: int, program_id: int):
         "berhasil": True,
         "enrollment_id": hasil["id"],
         "status": hasil["status"],
+        "invoice": invoice,
+        "student_name": siswa["nama_lengkap"],
+        "student_email": siswa["email"],
+        "student_nis": siswa["nis"],
+        "program_name": program["nama"],
+        "program_code": program["kode"],
+        "program_fee": program.get("harga_bulanan", 0),
     }
 
 
@@ -132,13 +153,30 @@ def daftar_menunggu():
                     p.nama AS nama_program,
                     p.harga_bulanan,
                     e.status,
-                    e.created_at
+                    e.created_at,
+                    inv.no_invoice,
+                    inv.jumlah AS invoice_jumlah,
+                    inv.status AS invoice_status,
+                    lp.payment_status,
+                    lp.paid_at
                 FROM enrollments AS e
                 JOIN students AS s ON s.user_id = e.student_id
                 JOIN users AS u ON u.id = s.user_id
                 JOIN programs AS p ON p.id = e.program_id
+                LEFT JOIN LATERAL (
+                    SELECT i.no_invoice, i.jumlah, i.status
+                    FROM invoices i WHERE i.enrollment_id = e.id
+                    ORDER BY i.created_at DESC, i.id DESC LIMIT 1
+                ) inv ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT pay.status AS payment_status, pay.paid_at
+                    FROM payments pay JOIN invoices i ON i.id = pay.invoice_id
+                    WHERE i.enrollment_id = e.id
+                    ORDER BY pay.created_at DESC, pay.id DESC LIMIT 1
+                ) lp ON TRUE
                 WHERE e.status = 'menunggu'
                   AND u.status = 'aktif'
+                  AND (p.harga_bulanan = 0 OR inv.status = 'lunas')
                 ORDER BY e.created_at ASC, e.id ASC;
                 """
             )
@@ -267,12 +305,31 @@ def batalkan_milik_siswa(enrollment_id: int, student_id: int) -> bool:
                 SET status = 'batal'
                 WHERE id = %s
                   AND student_id = %s
-                  AND status = 'menunggu'
+                  AND status IN ('menunggu_pembayaran', 'menunggu')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM invoices i
+                      WHERE i.enrollment_id = enrollments.id AND i.status = 'lunas'
+                  )
                 RETURNING id;
                 """,
                 (enrollment_id, student_id),
             )
             berhasil = cur.fetchone() is not None
+            if berhasil:
+                cur.execute(
+                    """
+                    UPDATE payments pay SET status = 'gagal'
+                    FROM invoices i
+                    WHERE pay.invoice_id = i.id
+                      AND i.enrollment_id = %s
+                      AND pay.status IN ('menunggu_pembayaran', 'menunggu_konfirmasi');
+                    """,
+                    (enrollment_id,),
+                )
+                cur.execute(
+                    "UPDATE invoices SET status = 'batal' WHERE enrollment_id = %s AND status = 'belum_dibayar';",
+                    (enrollment_id,),
+                )
         conn.commit()
 
     return berhasil
@@ -285,40 +342,25 @@ def proses_keputusan_admin(
     keputusan: str,
     alasan_tolak: str | None = None,
 ) -> dict:
-    """Setujui/tolak enrollment; persetujuan membuat tagihan pertama atomik.
-
-    Periode invoice adalah bulan kalender saat admin menyetujui. Jatuh tempo
-    default adalah 7 hari kalender dari tanggal persetujuan. Enrollment gratis
-    diaktifkan tanpa invoice karena constraint schema menolak invoice jumlah 0.
-    """
+    """Putuskan pendaftaran; refund simulasi dibuat atomik saat penolakan."""
     if type(enrollment_id) is not int or enrollment_id <= 0:
         raise ValueError("ID pendaftaran tidak valid.")
     if type(processed_by) is not int or processed_by <= 0:
         raise ValueError("ID administrator tidak valid.")
     if keputusan not in {"disetujui", "ditolak"}:
         raise ValueError("Keputusan harus 'disetujui' atau 'ditolak'.")
-
     alasan = alasan_tolak.strip() if isinstance(alasan_tolak, str) else ""
     if keputusan == "ditolak" and not alasan:
         raise ValueError("Alasan penolakan wajib diisi.")
 
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            # Kunci enrollment dan program; proses ganda akan menunggu dan
-            # kemudian melihat status terbaru setelah transaksi pertama selesai.
             cur.execute(
                 """
-                SELECT
-                    e.id AS enrollment_id,
-                    e.student_id,
-                    e.program_id,
-                    e.status,
-                    p.nama AS nama_program,
-                    p.harga_bulanan
-                FROM enrollments AS e
-                JOIN programs AS p ON p.id = e.program_id
-                WHERE e.id = %s
-                FOR UPDATE OF e, p;
+                SELECT e.id, e.student_id, e.program_id, e.status,
+                       p.nama AS nama_program, p.harga_bulanan
+                FROM enrollments e JOIN programs p ON p.id = e.program_id
+                WHERE e.id = %s FOR UPDATE OF e;
                 """,
                 (enrollment_id,),
             )
@@ -326,80 +368,92 @@ def proses_keputusan_admin(
             if enrollment is None:
                 return {"berhasil": False, "pesan": "Pendaftaran tidak ditemukan."}
             if enrollment["status"] != "menunggu":
-                return {
-                    "berhasil": False,
-                    "pesan": "Pendaftaran sudah diproses atau tidak lagi menunggu.",
-                }
+                return {"berhasil": False, "pesan": "Pendaftaran belum siap diputuskan atau sudah diproses."}
 
+            cur.execute(
+                """
+                SELECT i.id AS invoice_id, i.no_invoice, i.jumlah, i.status AS invoice_status,
+                       pay.id AS payment_id, pay.kode_bayar, pay.jumlah AS payment_jumlah,
+                       pay.status AS payment_status
+                FROM invoices i
+                LEFT JOIN LATERAL (
+                    SELECT p.id, p.kode_bayar, p.jumlah, p.status
+                    FROM payments p WHERE p.invoice_id = i.id
+                    ORDER BY p.created_at DESC, p.id DESC LIMIT 1
+                ) pay ON TRUE
+                WHERE i.enrollment_id = %s
+                ORDER BY i.created_at ASC, i.id ASC
+                FOR UPDATE OF i;
+                """,
+                (enrollment_id,),
+            )
+            invoices = cur.fetchall()
+            paid = [x for x in invoices if x["invoice_status"] == "lunas" and x["payment_status"] == "lunas"]
+            if keputusan == "disetujui" and enrollment["harga_bulanan"] > 0 and not paid:
+                return {"berhasil": False, "pesan": "Pembayaran belum lunas. Pendaftaran belum dapat disetujui."}
             if keputusan == "ditolak":
+                refund_rows = []
+                for invoice in paid:
+                    if invoice["payment_id"] is None:
+                        continue
+                    kode_refund = f"RF-{invoice['no_invoice']}"
+                    cur.execute(
+                        """
+                        INSERT INTO payment_refunds (payment_id, kode_refund, jumlah, alasan, status)
+                        VALUES (%s, %s, %s, %s, 'berhasil')
+                        ON CONFLICT (payment_id) DO NOTHING
+                        RETURNING id, kode_refund, jumlah, status, created_at, processed_at;
+                        """,
+                        (invoice["payment_id"], kode_refund, invoice["payment_jumlah"], alasan),
+                    )
+                    refund = cur.fetchone()
+                    if refund is None:
+                        cur.execute(
+                            "SELECT id, kode_refund, jumlah, status, created_at, processed_at FROM payment_refunds WHERE payment_id = %s;",
+                            (invoice["payment_id"],),
+                        )
+                        refund = cur.fetchone()
+                    cur.execute("UPDATE payments SET status = 'direfund' WHERE id = %s;", (invoice["payment_id"],))
+                    cur.execute("UPDATE invoices SET status = 'batal' WHERE id = %s;", (invoice["invoice_id"],))
+                    refund_rows.append({**refund, "no_invoice": invoice["no_invoice"]})
                 cur.execute(
-                    """
-                    UPDATE enrollments
-                    SET status = 'ditolak',
-                        processed_by = %s,
-                        processed_at = now(),
-                        alasan_tolak = %s
-                    WHERE id = %s
-                      AND status = 'menunggu'
-                    RETURNING id;
-                    """,
+                    """UPDATE enrollments SET status = 'ditolak', processed_by = %s,
+                       processed_at = now(), alasan_tolak = %s WHERE id = %s AND status = 'menunggu'
+                       RETURNING id;""",
                     (processed_by, alasan, enrollment_id),
                 )
                 if cur.fetchone() is None:
-                    return {
-                        "berhasil": False,
-                        "pesan": "Pendaftaran sudah diproses oleh admin lain.",
-                    }
+                    raise RuntimeError("Pendaftaran berubah saat keputusan diproses.")
+                cur.execute(
+                    "INSERT INTO activity_logs (user_id, aksi, detail) VALUES (%s, %s, %s);",
+                    (processed_by, "ENROLLMENT_TOLAK", f"Admin menolak pendaftaran {enrollment_id} ({enrollment['nama_program']}). Refund simulasi: {len(refund_rows)}."),
+                )
                 hasil = {
-                    "berhasil": True,
-                    "keputusan": "ditolak",
-                    "enrollment_id": enrollment_id,
-                    "student_id": enrollment["student_id"],
-                    "program_id": enrollment["program_id"],
-                    "nama_program": enrollment["nama_program"],
-                    "harga_bulanan": enrollment["harga_bulanan"],
-                    "alasan_tolak": alasan,
-                    "invoice": None,
+                    "berhasil": True, "keputusan": "ditolak", "enrollment_id": enrollment_id,
+                    "student_id": enrollment["student_id"], "program_id": enrollment["program_id"],
+                    "nama_program": enrollment["nama_program"], "harga_bulanan": enrollment["harga_bulanan"],
+                    "alasan_tolak": alasan, "refunds": refund_rows,
                 }
             else:
                 cur.execute(
-                    """
-                    UPDATE enrollments
-                    SET status = 'aktif',
-                        processed_by = %s,
-                        processed_at = now(),
-                        alasan_tolak = NULL
-                    WHERE id = %s
-                      AND status = 'menunggu'
-                    RETURNING id;
-                    """,
+                    """UPDATE enrollments SET status = 'aktif', processed_by = %s,
+                       processed_at = now(), alasan_tolak = NULL WHERE id = %s AND status = 'menunggu'
+                       RETURNING id;""",
                     (processed_by, enrollment_id),
                 )
                 if cur.fetchone() is None:
-                    return {
-                        "berhasil": False,
-                        "pesan": "Pendaftaran sudah diproses oleh admin lain.",
-                    }
-
-                jumlah = enrollment["harga_bulanan"]
-                invoice = buat_invoice_awal(
-                    cur=cur,
-                    enrollment_id=enrollment_id,
-                    jumlah=jumlah,
+                    raise RuntimeError("Pendaftaran berubah saat keputusan diproses.")
+                cur.execute(
+                    "INSERT INTO activity_logs (user_id, aksi, detail) VALUES (%s, %s, %s);",
+                    (processed_by, "ENROLLMENT_SETUJU", f"Admin menyetujui pendaftaran {enrollment_id} ({enrollment['nama_program']})."),
                 )
-
                 hasil = {
-                    "berhasil": True,
-                    "keputusan": "disetujui",
-                    "enrollment_id": enrollment_id,
-                    "student_id": enrollment["student_id"],
-                    "program_id": enrollment["program_id"],
-                    "nama_program": enrollment["nama_program"],
-                    "harga_bulanan": jumlah,
-                    "invoice": invoice,
+                    "berhasil": True, "keputusan": "disetujui", "enrollment_id": enrollment_id,
+                    "student_id": enrollment["student_id"], "program_id": enrollment["program_id"],
+                    "nama_program": enrollment["nama_program"], "harga_bulanan": enrollment["harga_bulanan"],
+                    "invoice": paid[0] if paid else None, "refunds": [],
                 }
         conn.commit()
-
     return hasil
 
 
@@ -562,7 +616,7 @@ def pindahkan_admin(
             cur.execute(
                 """
                 SELECT COUNT(*) AS jumlah FROM enrollments
-                WHERE program_id = %s AND status IN ('menunggu', 'aktif');
+                WHERE program_id = %s AND status IN ('menunggu_pembayaran', 'menunggu', 'aktif');
                 """,
                 (program_tujuan_id,),
             )
@@ -712,7 +766,7 @@ def batalkan_admin(enrollment_id: int, processed_by: int, alasan: str | None = N
                 """
                 UPDATE enrollments
                 SET status = 'batal', processed_by = %s, processed_at = now()
-                WHERE id = %s AND status IN ('menunggu', 'aktif')
+                WHERE id = %s AND status IN ('menunggu_pembayaran', 'menunggu', 'aktif')
                 RETURNING id;
                 """,
                 (processed_by, enrollment_id),

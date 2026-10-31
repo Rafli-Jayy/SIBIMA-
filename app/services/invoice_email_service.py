@@ -197,7 +197,7 @@ def buat_pdf_invoice_pendaftaran(
     details = Table([
         [Paragraph("Nominal tagihan penuh", styles["BodySmall"]), Paragraph(_rupiah(jumlah), styles["FieldValue"])],
         [Paragraph("Jatuh tempo", styles["BodySmall"]), Paragraph(_escape(_tanggal(jatuh_tempo)), styles["FieldValue"])],
-        [Paragraph("Metode", styles["BodySmall"]), Paragraph("Virtual Account (referensi internal SIBIMA)", styles["BodySmall"])],
+        [Paragraph("Metode", styles["BodySmall"]), Paragraph("Simulasi pembayaran internal SIBIMA", styles["BodySmall"])],
     ], colWidths=[width * 0.47, width * 0.53])
     details.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8),
@@ -218,15 +218,15 @@ def buat_pdf_invoice_pendaftaran(
     story += [Spacer(1, 5 * mm), total, Paragraph("CARA MELANJUTKAN PEMBAYARAN", styles["SectionLabel"])]
     story.append(Paragraph(
         "1. Login ke aplikasi SIBIMA KECE menggunakan akun siswa. &nbsp; "
-        "2. Buka menu <b>Pembayaran</b> dan pilih invoice ini. &nbsp; "
-        "3. Pilih <b>Bayar tagihan</b> untuk membuat referensi VA, kemudian ikuti "
-        "petunjuk aplikasi. Status baru menjadi lunas setelah admin memverifikasi pembayaran.",
+        "2. Buka menu <b>Tagihan &amp; Pembayaran</b> dan pilih invoice ini. &nbsp; "
+        "3. Tekan <b>Bayar Sekarang</b>. Sistem akan menjalankan simulasi pembayaran "
+        "dan memperbarui status secara otomatis.",
         styles["BodySmall"],
     ))
     story += [Spacer(1, 4 * mm), Paragraph(
-        "PENTING: Invoice ini merupakan tagihan yang belum dibayar, bukan kuitansi atau "
-        "bukti transfer. Nomor Virtual Account pada versi SIBIMA ini adalah referensi internal "
-        "dan belum terhubung ke bank atau payment gateway.", styles["BodySmall"]
+        "PENTING: Invoice ini merupakan tagihan yang belum dibayar, bukan kuitansi. "
+        "Pembayaran pada versi SIBIMA ini merupakan simulasi internal dan tidak memindahkan "
+        "uang sungguhan atau terhubung ke bank/payment gateway.", styles["BodySmall"]
     ), Spacer(1, 5 * mm), Paragraph("Terima kasih telah belajar bersama SIBIMA KECE.", styles["Footer"])]
 
     def draw_footer(canvas, document):
@@ -259,15 +259,79 @@ def _html_invoice(nama: str, nama_program: str, invoice: dict) -> str:
 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\"><tr><td align=\"center\">
 <table role=\"presentation\" width=\"600\" cellspacing=\"0\" cellpadding=\"0\" style=\"width:100%;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;\">
 <tr><td style=\"background:#142b4a;border-bottom:4px solid #12a9ba;padding:28px;text-align:center;\"><div style=\"font-size:28px;font-weight:800;letter-spacing:1px;color:#ffffff;\">SIBIMA <span style=\"color:#67e8f9;\">KECE</span></div><div style=\"font-size:11px;letter-spacing:2px;color:#cbd5e1;margin-top:7px;\">INVOICE PROGRAM BIMBEL</div></td></tr>
-<tr><td style=\"padding:28px;\"><div style=\"font-size:11px;font-weight:bold;letter-spacing:1px;color:#92400e;\">TAGIHAN BARU · MENUNGGU PEMBAYARAN</div>
-<h1 style=\"margin:10px 0 8px;color:#142b4a;font-size:24px;line-height:1.35;\">Pendaftaran program kamu disetujui!</h1>
-<p style=\"margin:0 0 20px;color:#475569;font-size:15px;line-height:1.8;\">Halo, <strong>{nama_html}</strong>. Pendaftaranmu untuk program <strong>{program_html}</strong> sudah disetujui. Invoice pertama sudah dibuat dan dilampirkan pada email ini.</p>
+<tr><td style=\"padding:28px;\"><div style=\"font-size:11px;font-weight:bold;letter-spacing:1px;color:#92400e;\">PENDAFTARAN TERCATAT · MENUNGGU PEMBAYARAN</div>
+<h1 style=\"margin:10px 0 8px;color:#142b4a;font-size:24px;line-height:1.35;\">Pendaftaran program kamu berhasil dicatat!</h1>
+<p style=\"margin:0 0 20px;color:#475569;font-size:15px;line-height:1.8;\">Halo, <strong>{nama_html}</strong>. Pendaftaranmu untuk program <strong>{program_html}</strong> berhasil dicatat. Invoice otomatis dibuat dan dilampirkan pada email ini.</p>
 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background:#f1f6fc;border:1px solid #dce5ef;border-radius:12px;\"><tr><td style=\"padding:18px 20px;\"><div style=\"font-size:11px;color:#64748b;letter-spacing:1px;\">TOTAL TAGIHAN</div><div style=\"font-size:28px;font-weight:800;color:#142b4a;margin-top:7px;\">{total_html}</div><div style=\"margin-top:10px;font-size:13px;color:#475569;\">Nomor invoice: <strong>{no_html}</strong></div><div style=\"margin-top:5px;font-size:13px;color:#475569;\">Periode: {periode_html}</div><div style=\"margin-top:5px;font-size:13px;color:#92400e;\">Jatuh tempo: <strong>{tempo_html}</strong></div></td></tr></table>
-<h2 style=\"margin:24px 0 8px;font-size:16px;color:#142b4a;\">Langkah pembayaran</h2><ol style=\"padding-left:21px;color:#475569;font-size:14px;line-height:1.8;\"><li>Login ke aplikasi SIBIMA KECE.</li><li>Buka menu <strong>Pembayaran</strong> dan pilih invoice {no_html}.</li><li>Pilih <strong>Bayar tagihan</strong> untuk membuat referensi Virtual Account, lalu ikuti petunjuk di aplikasi.</li><li>Setelah melakukan pembayaran sesuai alur aplikasi, pilih <strong>Saya sudah membayar</strong>. Admin akan memeriksa pengajuan sebelum status menjadi lunas.</li></ol>
-<div style=\"margin-top:20px;padding:14px 16px;border-left:4px solid #f59e0b;background:#fffbeb;color:#78350f;font-size:12px;line-height:1.7;\"><strong>Catatan:</strong> Invoice terlampir adalah tagihan, bukan bukti pembayaran lunas. Virtual Account pada versi SIBIMA ini masih berupa referensi internal dan belum terhubung ke bank atau payment gateway.</div>
+<h2 style=\"margin:24px 0 8px;font-size:16px;color:#142b4a;\">Langkah pembayaran</h2><ol style=\"padding-left:21px;color:#475569;font-size:14px;line-height:1.8;\"><li>Login ke aplikasi SIBIMA KECE.</li><li>Buka menu <strong>Tagihan &amp; Pembayaran</strong> dan pilih invoice {no_html}.</li><li>Tekan <strong>Bayar Sekarang</strong> untuk menjalankan simulasi pembayaran otomatis.</li><li>Sistem akan menampilkan hasil simulasi berhasil atau gagal dan memperbarui status invoice secara otomatis.</li></ol>
+<div style=\"margin-top:20px;padding:14px 16px;border-left:4px solid #f59e0b;background:#fffbeb;color:#78350f;font-size:12px;line-height:1.7;\"><strong>Catatan:</strong> Invoice terlampir adalah tagihan, bukan bukti pembayaran lunas. Pembayaran pada versi SIBIMA ini hanya simulasi internal dan tidak memindahkan uang sungguhan atau terhubung ke bank/payment gateway.</div>
 <p style=\"margin-top:26px;color:#334155;font-size:14px;line-height:1.8;\">Salam hangat,<br><strong>Tim SIBIMA KECE</strong></p></td></tr>
 <tr><td style=\"padding:18px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;font-size:11px;line-height:1.7;color:#64748b;\">Email otomatis dari SIBIMA KECE.<br>Jika pesan ini masuk Spam, periksa autentikasi domain dan gunakan tombol “Bukan spam” setelah memastikan email memang berasal dari SIBIMA.</td></tr>
 </table></td></tr></table></body></html>"""
+
+
+def kirim_email_tagihan_bulanan(
+    email: str,
+    nama: str,
+    nama_program: str,
+    invoice: dict,
+) -> tuple[bool, str]:
+    """Buat PDF dan kirim email tagihan bulanan dengan keterangan simulasi."""
+    try:
+        no_invoice, jumlah, periode, jatuh_tempo = _validasi_invoice(invoice)
+    except ValueError as exc:
+        return False, str(exc)
+    recipient = str(email or "").strip()
+    try:
+        pdf_path = buat_pdf_invoice_pendaftaran(invoice, nama, recipient or "-", nama_program)
+    except Exception as exc:
+        return False, f"Invoice tersimpan, tetapi PDF gagal dibuat ({type(exc).__name__})."
+    if not recipient or "\r" in recipient or "\n" in recipient:
+        return False, f"PDF tersimpan di {pdf_path}, tetapi alamat email siswa tidak valid."
+    parsed = parseaddr(recipient)[1]
+    if parsed != recipient or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
+        return False, f"PDF tersimpan di {pdf_path}, tetapi alamat email siswa tidak valid."
+    if not SMTP_HOST or not SMTP_USER or not SMTP_PASSWORD or not 1 <= SMTP_PORT <= 65535:
+        return False, f"PDF tersimpan di {pdf_path}, tetapi konfigurasi SMTP belum lengkap/valid."
+    msg = EmailMessage()
+    msg["Subject"] = f"Tagihan Bulanan SIBIMA KECE | {no_invoice}"
+    msg["From"] = formataddr(("SIBIMA KECE", SMTP_USER))
+    msg["To"] = recipient
+    msg.set_content(
+        f"Halo {nama or 'Siswa SIBIMA'},\n\nTagihan bulanan program {nama_program} "
+        f"sebesar {_rupiah(jumlah)} untuk periode {_periode(periode)} telah diterbitkan. "
+        f"Nomor invoice: {no_invoice}. Jatuh tempo: {_tanggal(jatuh_tempo)}.\n\n"
+        "Buka menu Tagihan & Pembayaran dan tekan Bayar Sekarang untuk menjalankan simulasi. "
+        "Simulasi ini tidak memindahkan uang sungguhan. Invoice PDF terlampir.\n\nTim SIBIMA KECE"
+    )
+    msg.add_alternative(
+        f"""<!doctype html><html lang='id'><body style='margin:0;padding:24px;background:#eef2f7;font-family:Arial,sans-serif;color:#172033;'>
+        <table role='presentation' style='max-width:600px;width:100%;margin:auto;background:#fff;border-radius:14px;border-collapse:collapse;overflow:hidden;'>
+        <tr><td style='padding:24px;background:#142b4a;color:#fff;text-align:center;font-size:22px;font-weight:bold;'>SIBIMA KECE</td></tr>
+        <tr><td style='padding:28px;'><p style='color:#92400e;font-size:12px;font-weight:bold;'>TAGIHAN BULANAN BARU</p>
+        <h2 style='color:#142b4a;margin:8px 0;'>Tagihan bulan ini telah diterbitkan</h2><p>Halo <strong>{_escape(nama)}</strong>, tagihan program <strong>{_escape(nama_program)}</strong> untuk periode {_escape(_periode(periode))} sudah tersedia.</p>
+        <div style='background:#f1f6fc;padding:18px;border-radius:10px;'><div style='font-size:12px;color:#64748b;'>TOTAL TAGIHAN</div><div style='font-size:25px;font-weight:bold;color:#142b4a;'>{_escape(_rupiah(jumlah))}</div><div style='font-size:12px;color:#64748b;margin-top:8px;'>Invoice: {_escape(no_invoice)} · Jatuh tempo: {_escape(_tanggal(jatuh_tempo))}</div></div>
+        <p>Buka menu <strong>Tagihan &amp; Pembayaran</strong>, pilih invoice ini, lalu tekan <strong>Bayar Sekarang</strong>. Sistem akan menjalankan simulasi otomatis.</p>
+        <p style='padding:12px;background:#fffbeb;color:#92400e;font-size:12px;'>Pembayaran ini hanya simulasi internal SIBIMA. Tidak ada uang sungguhan yang dipindahkan.</p>
+        <p>Invoice PDF terlampir.<br>Salam,<br><strong>Tim SIBIMA KECE</strong></p></td></tr></table></body></html>""",
+        subtype="html",
+    )
+    try:
+        msg.add_attachment(pdf_path.read_bytes(), maintype="application", subtype="pdf", filename=pdf_path.name)
+    except OSError:
+        return False, f"PDF invoice tidak dapat dibaca: {pdf_path}"
+    context = ssl.create_default_context()
+    try:
+        if SMTP_PORT == 465:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20, context=context) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD); refused = server.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+                server.ehlo(); server.starttls(context=context); server.ehlo()
+                server.login(SMTP_USER, SMTP_PASSWORD); refused = server.send_message(msg)
+        return (not refused, "Email tagihan bulanan dikirim." if not refused else "SMTP menolak penerima.")
+    except (smtplib.SMTPException, OSError, ValueError) as exc:
+        return False, f"Email tagihan bulanan gagal ({type(exc).__name__}); PDF tersimpan di {pdf_path}."
 
 
 def kirim_email_invoice_pendaftaran(
@@ -276,7 +340,7 @@ def kirim_email_invoice_pendaftaran(
     nama_program: str,
     invoice: dict,
 ) -> tuple[bool, str]:
-    """Buat invoice PDF dan kirim email HTML setelah pendaftaran disetujui."""
+    """Buat invoice PDF dan kirim email HTML segera setelah pendaftaran dicatat."""
     try:
         no_invoice, jumlah, periode, jatuh_tempo = _validasi_invoice(invoice)
     except ValueError as exc:
@@ -304,14 +368,14 @@ def kirim_email_invoice_pendaftaran(
     subject = f"Invoice SIBIMA KECE | {no_invoice}"
     text_body = (
         f"Halo, {nama or 'Siswa SIBIMA'}!\n\n"
-        f"Pendaftaran program {nama_program} telah disetujui. Invoice {no_invoice} "
-        f"sebesar {_rupiah(jumlah)} untuk periode {_periode(periode)} telah dibuat. "
+        f"Pendaftaran program {nama_program} berhasil dicatat. Invoice {no_invoice} "
+        f"sebesar {_rupiah(jumlah)} untuk periode {_periode(periode)} dibuat otomatis. "
         f"Jatuh tempo: {_tanggal(jatuh_tempo)}.\n\n"
         "Invoice PDF terlampir. Untuk membayar, login ke aplikasi SIBIMA KECE, buka "
-        "menu Pembayaran, pilih invoice ini, dan buat referensi Virtual Account lewat "
-        "menu Bayar tagihan. Status baru menjadi lunas setelah diverifikasi admin.\n\n"
-        "Catatan: Virtual Account pada versi ini merupakan referensi internal, belum "
-        "terhubung ke bank atau payment gateway. Invoice bukan bukti pembayaran lunas.\n\n"
+        "menu Tagihan & Pembayaran, pilih invoice ini, lalu tekan Bayar Sekarang. Sistem "
+        "menjalankan simulasi dan memperbarui status secara otomatis.\n\n"
+        "Catatan: Pembayaran pada versi ini hanya simulasi internal; tidak ada uang "
+        "sungguhan yang dipindahkan dan tidak ada koneksi bank/payment gateway. Invoice bukan bukti pembayaran lunas.\n\n"
         "Salam hangat,\nTim SIBIMA KECE\n"
     )
     msg = EmailMessage()

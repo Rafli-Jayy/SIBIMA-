@@ -48,7 +48,29 @@ def daftar_program(student_id: int, program_id: int):
         )
 
         if hasil["berhasil"]:
-            return True, "Pendaftaran program berhasil dikirim. Status: menunggu persetujuan admin."
+            invoice = hasil.get("invoice")
+            if invoice:
+                from app.services import invoice_email_service
+                try:
+                    email_ok, email_message = invoice_email_service.kirim_email_invoice_pendaftaran(
+                        email=hasil.get("student_email"),
+                        nama=hasil.get("student_name"),
+                        nama_program=hasil.get("program_name"),
+                        invoice=invoice,
+                    )
+                except Exception as exc:
+                    email_ok, email_message = False, f"Email invoice gagal ({type(exc).__name__})."
+                pesan = (
+                    f"Pendaftaran tercatat. Invoice {invoice['no_invoice']} sebesar "
+                    f"{invoice['jumlah']:,.0f} dibuat otomatis. Status: menunggu pembayaran."
+                )
+                if email_ok:
+                    pesan += " Invoice PDF dikirim ke email terdaftar."
+                else:
+                    pesan += " Email invoice belum terkirim; invoice tetap tersedia di aplikasi. " + str(email_message)
+                return True, pesan
+            return True, "Pendaftaran program gratis berhasil dikirim. Status: menunggu persetujuan admin; tidak ada invoice."
+
 
         alasan = hasil.get("alasan")
         pesan_gagal = {
@@ -60,8 +82,10 @@ def daftar_program(student_id: int, program_id: int):
 
         if alasan == "sudah_terdaftar":
             status_lama = hasil.get("status")
-            if status_lama == "menunggu":
-                pesan = "Pendaftaran program ini masih menunggu keputusan admin."
+            if status_lama == "menunggu_pembayaran":
+                pesan = "Pendaftaran program ini masih menunggu pembayaran. Buka menu Tagihan & Pembayaran."
+            elif status_lama == "menunggu":
+                pesan = "Pembayaran sudah tercatat atau program gratis; pendaftaran menunggu keputusan admin."
             elif status_lama == "aktif":
                 pesan = "Kamu sudah terdaftar aktif pada program ini."
             elif status_lama == "batal":

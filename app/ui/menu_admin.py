@@ -274,8 +274,7 @@ def _proses_aksi_akun(user: dict):
                 Panel(
                     (
                         "ACC akun siswa akan mengaktifkan akun dan menerbitkan NIS. "
-                        "Pendaftaran program tidak otomatis disetujui; invoice dibuat dan dikirim "
-                        "setelah program disetujui terpisah."
+                        "Pendaftaran program dilakukan terpisah; invoice dibuat otomatis saat siswa mendaftar."
                         if user.get("role") == "siswa"
                         else "ACC akun tutor akan mengaktifkan akun dan menerbitkan kode tutor. "
                         "Jadwal mengajar tidak dibuat otomatis."
@@ -449,6 +448,8 @@ def _tampilkan_daftar_enrollment(daftar: list[dict]):
     tabel.add_column("Program", min_width=16)
     tabel.add_column("Jenjang", no_wrap=True)
     tabel.add_column("Biaya/Bulan", justify="right", no_wrap=True)
+    tabel.add_column("Invoice", min_width=18)
+    tabel.add_column("Pembayaran", min_width=16)
     tabel.add_column("Didaftarkan", no_wrap=True)
 
     for item in daftar:
@@ -459,6 +460,8 @@ def _tampilkan_daftar_enrollment(daftar: list[dict]):
             f"{item.get('nama_program', '-')} ({item.get('kode_program', '-')})",
             str(item.get("jenjang") or "-"),
             _format_rupiah(item.get("harga_bulanan", 0)),
+            str(item.get("no_invoice") or "GRATIS"),
+            str(item.get("payment_status") or ("TANPA TAGIHAN" if not item.get("no_invoice") else "-")),
             _format_waktu(item.get("created_at")),
         )
     console.print(tabel)
@@ -478,7 +481,10 @@ def _tampilkan_detail_enrollment(item: dict):
     tabel.add_row("Kode program", str(item.get("kode_program") or "-"))
     tabel.add_row("Jenjang", str(item.get("jenjang") or "-"))
     tabel.add_row("Biaya per bulan", _format_rupiah(item.get("harga_bulanan", 0)))
-    tabel.add_row("Status", str(item.get("status") or "-"))
+    tabel.add_row("Status pendaftaran", str(item.get("status") or "-"))
+    tabel.add_row("Nomor invoice", str(item.get("no_invoice") or "Tidak ada (program gratis)"))
+    tabel.add_row("Status pembayaran", str(item.get("payment_status") or "Tidak diperlukan"))
+    tabel.add_row("Nominal invoice", _format_rupiah(item.get("invoice_jumlah") or 0))
     tabel.add_row("Tanggal daftar", _format_waktu(item.get("created_at")))
     console.print(
         Panel(
@@ -516,7 +522,7 @@ def _proses_aksi_enrollment(item: dict):
         aksi = questionary.select(
             "Tindakan untuk pendaftaran ini:",
             choices=[
-                Choice("✓  Setujui pendaftaran + buat tagihan pertama", value="setujui"),
+                Choice("✓  Terima pendaftaran", value="setujui"),
                 Choice("✕  Tolak pendaftaran", value="tolak"),
                 Separator("────────────────────────"),
                 Choice("↩  Kembali ke daftar", value="kembali"),
@@ -532,8 +538,8 @@ def _proses_aksi_enrollment(item: dict):
 
         if aksi == "setujui":
             yakin = questionary.confirm(
-                f"Setujui pendaftaran {item.get('nama_program')} untuk "
-                f"{item.get('nama_siswa')} dan buat tagihan pertama?",
+                f"Terima pendaftaran {item.get('nama_program')} untuk "
+                f"{item.get('nama_siswa')}?",
                 default=False,
                 style=TEMA_ADMIN,
             ).ask()
@@ -664,7 +670,7 @@ def _menu_konfirmasi_enrollment():
 
 
 def menu_konfirmasi():
-    """Pilih antrean akun, pendaftaran program, atau pembayaran."""
+    """Pilih antrean akun atau pendaftaran program."""
     while session.punya_role("admin"):
         bersihkan_layar()
         _tampilkan_header("Pusat Konfirmasi", "PILIH JENIS ANTREAN")
@@ -673,8 +679,7 @@ def menu_konfirmasi():
             choices=[
                 Choice("Akun siswa/tutor", value="akun"),
                 Choice("Pendaftaran program bimbel", value="enrollment"),
-                Choice("Konfirmasi pembayaran", value="pembayaran"),
-                Separator("────────────────────────"),
+                    Separator("────────────────────────"),
                 Choice("Kembali ke dashboard", value="kembali"),
             ],
             style=TEMA_ADMIN,
@@ -688,8 +693,6 @@ def menu_konfirmasi():
             _menu_konfirmasi_akun()
         elif pilihan == "enrollment":
             _menu_konfirmasi_enrollment()
-        elif pilihan == "pembayaran":
-            menu_pembayaran.menu_konfirmasi_pembayaran()
 
 def _tampilkan_modul_belum_tersedia(nama_modul: str):
     bersihkan_layar()

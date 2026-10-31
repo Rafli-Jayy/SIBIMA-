@@ -68,16 +68,23 @@ def pengumuman_terbaru_siswa(limit: int = 3) -> list[dict]:
     return engagement_repo.pengumuman_terbaru_siswa(limit)
 
 
+
 def daftar_notifikasi(role: str, limit: int = 200) -> list[dict]:
-    """Daftar notifikasi aktif untuk akun siswa/tutor yang sedang login."""
+    """Daftar pengumuman aktif untuk akun siswa/tutor yang sedang login."""
     pengguna = _pengguna_aktif(role)
     if type(limit) is not int or limit < 1:
         raise ValueError("Batas notifikasi tidak valid.")
     return engagement_repo.daftar_notifikasi_penerima(pengguna["id"], role, limit)
 
 
+def jumlah_notifikasi_belum_dibaca(role: str) -> int:
+    """Hitung badge notifikasi pribadi untuk siswa atau tutor aktif."""
+    pengguna = _pengguna_aktif(role)
+    return engagement_repo.jumlah_notifikasi_belum_dibaca(pengguna["id"], role)
+
+
 def buka_notifikasi(role: str, announcement_id: int) -> dict:
-    """Buka notifikasi milik peran ini dan catat status baca secara individual."""
+    """Buka notifikasi sesuai peran dan catat sudah dibaca untuk pengguna ini."""
     pengguna = _pengguna_aktif(role)
     if type(announcement_id) is not int or announcement_id < 1:
         raise ValueError("ID notifikasi tidak valid.")

@@ -6,7 +6,6 @@ from questionary import Choice, Separator, Style
 from rich.columns import Columns
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 from app import session
 from app.repositories import enrollment_repo, program_repo, user_repo
@@ -36,7 +35,8 @@ GAYA_SIBIMA = Style([
 
 
 STATUS_LABEL = {
-    "menunggu": "MENUNGGU PERSETUJUAN",
+    "menunggu_pembayaran": "MENUNGGU PEMBAYARAN",
+    "menunggu": "MENUNGGU PERSETUJUAN ADMIN",
     "aktif": "AKTIF",
     "ditolak": "DITOLAK",
     "batal": "DIBATALKAN",
@@ -70,6 +70,7 @@ def _ambil_pendaftaran(student_id):
 def _kartu_ringkas(enrollments):
     aktif = [item for item in enrollments if item["status"] == "aktif"]
     menunggu = [item for item in enrollments if item["status"] == "menunggu"]
+    menunggu_bayar = [item for item in enrollments if item["status"] == "menunggu_pembayaran"]
     riwayat = [
         item for item in enrollments
         if item["status"] in {"ditolak", "batal", "selesai"}
@@ -83,7 +84,7 @@ def _kartu_ringkas(enrollments):
             expand=True,
         ),
         Panel(
-            f"[bold yellow]{len(menunggu)}[/bold yellow]\n[white]Menunggu admin[/white]",
+            f"[bold yellow]{len(menunggu)}[/bold yellow]\n[white]Menunggu admin[/white]\n[dim]{len(menunggu_bayar)} menunggu bayar[/dim]",
             title="[bold]ANTREAN[/bold]",
             border_style="yellow" if menunggu else "dim",
             expand=True,
@@ -111,7 +112,7 @@ def _tabel_pendaftaran(enrollments, judul="Kelas dan Status Pendaftaran"):
         status = item.get("status", "-")
         if status == "aktif":
             gaya = "green"
-        elif status == "menunggu":
+        elif status in {"menunggu", "menunggu_pembayaran"}:
             gaya = "yellow"
         elif status == "ditolak":
             gaya = "red"
@@ -154,6 +155,7 @@ def _dashboard(pengguna, enrollments):
 
     aktif = [item for item in enrollments if item["status"] == "aktif"]
     menunggu = [item for item in enrollments if item["status"] == "menunggu"]
+    menunggu_bayar = [item for item in enrollments if item["status"] == "menunggu_pembayaran"]
 
     _kartu_ringkas(enrollments)
 
@@ -163,7 +165,8 @@ def _dashboard(pengguna, enrollments):
                 "[bold white]Kamu belum punya kelas bimbel.[/bold white]\n\n"
                 "Mulai dari [bold cyan]Katalog Program[/bold cyan] untuk melihat pilihan kelas, "
                 "jenjang, biaya bulanan, dan sisa kuota. Setelah mendaftar, statusnya akan "
-                "ditampilkan di dashboard sambil menunggu persetujuan admin.",
+                "ditampilkan di dashboard. Program berbayar perlu dilunasi sebelum "
+                "masuk antrean persetujuan admin; program gratis langsung masuk antrean.",
                 title="[bold cyan]MULAI BELAJAR[/bold cyan]",
                 border_style="cyan",
                 padding=(1, 3),
@@ -184,11 +187,30 @@ def _dashboard(pengguna, enrollments):
                     expand=True,
                 )
             )
+        if menunggu_bayar:
+            console.print(
+                Panel(
+                    "\n".join(f"[yellow]•[/yellow] {item['nama_program']} — invoice menunggu pembayaran" for item in menunggu_bayar[:5]),
+                    title="[bold yellow]MENUNGGU PEMBAYARAN[/bold yellow]",
+                    border_style="yellow", padding=(1, 2), expand=True,
+                )
+            )
+        if menunggu_bayar:
+            console.print(
+                Panel(
+                    "\n".join(
+                        f"[yellow]•[/yellow] {item['nama_program']} — invoice belum lunas; buka Tagihan & Pembayaran"
+                        for item in menunggu_bayar[:5]
+                    ),
+                    title="[bold yellow]MENUNGGU PEMBAYARAN[/bold yellow]",
+                    border_style="yellow", padding=(1, 2), expand=True,
+                )
+            )
         if menunggu:
             console.print(
                 Panel(
                     "\n".join(
-                        f"[yellow]•[/yellow] {item['nama_program']} — masih menunggu persetujuan admin"
+                        f"[yellow]•[/yellow] {item['nama_program']} — menunggu keputusan admin"
                         for item in menunggu[:5]
                     ),
                     title="[bold yellow]PENDAFTARAN DIPROSES[/bold yellow]",
@@ -309,7 +331,7 @@ def menu_katalog(pengguna):
         )
 
         konfirmasi = questionary.confirm(
-            "Kirim pendaftaran program ini ke admin?",
+            "Lanjutkan pendaftaran dan buat invoice otomatis jika program berbayar?",
             default=False,
             style=GAYA_SIBIMA,
         ).ask()
@@ -355,11 +377,17 @@ def _menu_fitur_belum_terhubung(nama, enrollments):
     bersihkan_layar()
     aktif = [item for item in enrollments if item["status"] == "aktif"]
     menunggu = [item for item in enrollments if item["status"] == "menunggu"]
+    menunggu_bayar = [item for item in enrollments if item["status"] == "menunggu_pembayaran"]
 
     if not aktif and nama in {"Jadwal Saya", "Absensi", "Nilai dan Rapor", "Tagihan dan Pembayaran", "Catatan Materi"}:
-        if menunggu:
+        if menunggu_bayar:
             isi = (
-                "Pendaftaran programmu masih menunggu persetujuan admin. "
+                "Pendaftaran programmu menunggu pembayaran. Buka menu Tagihan & Pembayaran "
+                "dan jalankan simulasi checkout sebelum pendaftaran masuk antrean admin."
+            )
+        elif menunggu:
+            isi = (
+                "Pendaftaran programmu sudah lunas atau gratis dan sedang menunggu persetujuan admin. "
                 "Fitur kelas akan relevan setelah pendaftaran disetujui. "
                 "Kamu bisa memantau statusnya melalui menu Kelas & Status Pendaftaran."
             )
@@ -587,6 +615,14 @@ def jalankan():
             return
 
         _dashboard(pengguna, enrollments)
+        try:
+            jumlah_belum_dibaca = engagement_service.jumlah_notifikasi_belum_dibaca("siswa")
+        except (psycopg.Error, PermissionError, ValueError):
+            jumlah_belum_dibaca = 0
+        label_notifikasi = (
+            f"🔔  Notifikasi ({jumlah_belum_dibaca} belum dibaca)"
+            if jumlah_belum_dibaca > 0 else "🔔  Notifikasi"
+        )
         pilihan = questionary.select(
             "Apa yang ingin kamu lakukan?",
             choices=[
@@ -597,7 +633,7 @@ def jalankan():
                 Choice("📊  Nilai dan Rapor", value="nilai"),
                 Choice("💳  Tagihan dan Pembayaran", value="pembayaran"),
                 Choice("📖  Catatan Materi", value="materi"),
-                Choice("🔔  Notifikasi", value="notifikasi"),
+                Choice(label_notifikasi, value="notifikasi"),
                 Choice("🤖  Tanya AI (opsional)", value="ai"),
                 Choice("👤  Profil Saya", value="profil"),
                 Separator("────────────────────────"),

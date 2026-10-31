@@ -144,8 +144,11 @@ def pengumuman_terbaru_siswa(limit: int = 3) -> list[dict]:
             return cur.fetchall()
 
 
+
 def daftar_notifikasi_penerima(user_id: int, role: str, limit: int = 200) -> list[dict]:
     """Ambil pengumuman aktif yang ditujukan ke peran pengguna, dengan status baca pribadi."""
+    if type(user_id) is not int or user_id < 1:
+        raise ValueError("ID pengguna tidak valid.")
     if role not in {"siswa", "tutor"}:
         raise ValueError("Peran penerima tidak valid.")
     if type(limit) is not int or limit < 1:
@@ -154,8 +157,7 @@ def daftar_notifikasi_penerima(user_id: int, role: str, limit: int = 200) -> lis
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT a.id, a.judul, a.isi, a.created_at,
-                       r.read_at,
+                SELECT a.id, a.judul, a.isi, a.created_at, r.read_at,
                        (r.announcement_id IS NOT NULL) AS sudah_dibaca
                 FROM announcements AS a
                 JOIN announcement_targets AS t ON t.announcement_id = a.id
@@ -170,10 +172,38 @@ def daftar_notifikasi_penerima(user_id: int, role: str, limit: int = 200) -> lis
             return cur.fetchall()
 
 
-def detail_notifikasi_penerima(user_id: int, role: str, announcement_id: int) -> dict | None:
-    """Buka detail notifikasi yang aktif dan sesuai peran; catat baca per pengguna."""
+def jumlah_notifikasi_belum_dibaca(user_id: int, role: str) -> int:
+    """Hitung notifikasi aktif yang belum dibaca oleh pengguna tertentu."""
+    if type(user_id) is not int or user_id < 1:
+        raise ValueError("ID pengguna tidak valid.")
     if role not in {"siswa", "tutor"}:
         raise ValueError("Peran penerima tidak valid.")
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM announcements AS a
+                JOIN announcement_targets AS t ON t.announcement_id = a.id
+                LEFT JOIN announcement_reads AS r
+                  ON r.announcement_id = a.id AND r.user_id = %s
+                WHERE a.archived_at IS NULL
+                  AND t.target_role = %s
+                  AND r.announcement_id IS NULL;
+                """,
+                (user_id, role),
+            )
+            return int(cur.fetchone()[0] or 0)
+
+
+def detail_notifikasi_penerima(user_id: int, role: str, announcement_id: int) -> dict | None:
+    """Buka notifikasi aktif sesuai role dan catat baca secara individual."""
+    if type(user_id) is not int or user_id < 1:
+        raise ValueError("ID pengguna tidak valid.")
+    if role not in {"siswa", "tutor"}:
+        raise ValueError("Peran penerima tidak valid.")
+    if type(announcement_id) is not int or announcement_id < 1:
+        raise ValueError("ID notifikasi tidak valid.")
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
