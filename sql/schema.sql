@@ -306,8 +306,28 @@ CREATE TABLE announcements (
     judul      VARCHAR(150) NOT NULL,
     isi        TEXT         NOT NULL,
     dibuat_by  INT          NOT NULL REFERENCES users(id),
-    created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    archived_at TIMESTAMPTZ
 );
+
+-- Target penerima pengumuman. Admin bukan role penerima.
+CREATE TABLE announcement_targets (
+    announcement_id INT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+    target_role     user_role NOT NULL CHECK (target_role IN ('siswa', 'tutor')),
+    PRIMARY KEY (announcement_id, target_role)
+);
+CREATE INDEX idx_announcement_targets_role
+    ON announcement_targets (target_role, announcement_id);
+
+-- Status baca disimpan per pengguna, bukan per role.
+CREATE TABLE announcement_reads (
+    announcement_id INT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+    user_id         INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    read_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (announcement_id, user_id)
+);
+CREATE INDEX idx_announcement_reads_user
+    ON announcement_reads (user_id, announcement_id);
 
 
 CREATE TABLE activity_logs (

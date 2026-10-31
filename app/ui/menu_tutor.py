@@ -10,7 +10,7 @@ from rich.text import Text
 
 from app import session
 from app.ui.console import console, bersihkan_layar, gagal, sukses
-from app.ui import menu_tutor_academic
+from app.ui import menu_tutor_academic, menu_notifikasi
 
 _GAYA = Style([
     ("qmark", "fg:#00ffff bold"),
@@ -82,6 +82,7 @@ def jalankan():
             Choice(f"  {index:02d}  {label}", value=kode)
             for index, (label, kode) in enumerate(_MENU_AKADEMIK, start=1)
         )
+        choices.append(Choice("  🔔  Notifikasi", value="notifikasi"))
         choices.append(Separator("────────── AKUN ──────────────"))
         choices.extend(
             Choice(f"  {index:02d}  {label}", value=kode)
@@ -107,4 +108,7 @@ def jalankan():
             input("\nTekan Enter untuk kembali ke menu utama...")
             return
 
-        menu_tutor_academic.jalankan_modul(pilihan)
+        if pilihan == "notifikasi":
+            menu_notifikasi.jalankan("tutor")
+        else:
+            menu_tutor_academic.jalankan_modul(pilihan)

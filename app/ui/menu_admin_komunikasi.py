@@ -1,4 +1,4 @@
-"""Submenu pengumuman admin dan log aktivitas."""
+"""Submenu komunikasi admin: pengumuman dan log aktivitas."""
 
 from datetime import datetime
 
@@ -19,6 +19,9 @@ GAYA = Style([
     ("highlighted", "fg:#00ffff bold"), ("selected", "fg:#00ffff"),
     ("separator", "fg:#444444"), ("instruction", "fg:#888888 italic"),
 ])
+
+
+_LABEL_ROLE = {"siswa": "Siswa", "tutor": "Tutor"}
 
 
 def _jeda():
@@ -43,47 +46,78 @@ def _waktu(nilai):
     return str(nilai)
 
 
-def _detail_pengumuman(item):
-    bersihkan_layar()
-    _header("Detail Pengumuman", f"Pengumuman ID {item['id']}")
-    isi = Text()
-    isi.append(str(item.get("judul") or "Tanpa judul"), style="bold cyan")
-    isi.append("\n\n")
-    isi.append(str(item.get("isi") or ""), style="white")
-    isi.append("\n\n")
-    isi.append(f"Dibuat oleh: {item.get('nama_pembuat') or '-'}\nWaktu: {_waktu(item.get('created_at'))}", style="dim")
-    console.print(Panel(isi, border_style="cyan", padding=(1, 3), expand=True))
-    _jeda()
+def _detail_pengumuman(item, status):
+    while True:
+        bersihkan_layar()
+        label_status = "PENGUMUMAN AKTIF" if status == "aktif" else "ARSIP PENGUMUMAN"
+        _header("Detail Pengumuman", f"{label_status} • ID {item['id']}")
+        isi = Text()
+        isi.append(str(item.get("judul") or "Tanpa judul"), style="bold cyan")
+        isi.append("\n\n")
+        isi.append(str(item.get("isi") or ""), style="white")
+        isi.append("\n\n")
+        target = ", ".join(_LABEL_ROLE.get(role, role) for role in item.get("target_roles", [])) or "Belum ditentukan"
+        isi.append(
+            f"Penerima: {target}\nDibuat oleh: {item.get('nama_pembuat') or '-'}\nWaktu dibuat: {_waktu(item.get('created_at'))}",
+            style="dim",
+        )
+        if item.get("archived_at"):
+            isi.append(f"\nDiarsipkan: {_waktu(item.get('archived_at'))}", style="yellow")
+        console.print(Panel(isi, border_style="cyan", padding=(1, 3), expand=True))
+        choices = []
+        if status == "aktif":
+            choices.append(Choice("Arsipkan pengumuman", value="arsip"))
+        choices.extend([Separator("────────────────────────"), Choice("Kembali", value="kembali")])
+        pilihan = questionary.select("Tindakan:", choices=choices, style=GAYA).ask()
+        if pilihan in (None, "kembali"):
+            return
+        if pilihan == "arsip":
+            yakin = questionary.confirm(
+                "Arsipkan pengumuman ini? Pengumuman yang diarsipkan tidak dapat dikembalikan.",
+                default=False, style=GAYA,
+            ).ask()
+            if not yakin:
+                continue
+            try:
+                engagement_service.arsipkan_pengumuman_admin(item["id"])
+                sukses("Pengumuman berhasil diarsipkan dan tidak lagi tampil di Notifikasi penerima.")
+                _jeda()
+                return
+            except (ValueError, PermissionError) as exc:
+                gagal(str(exc)); _jeda(); return
+            except psycopg.Error as exc:
+                gagal(f"Pengumuman gagal diarsipkan ({type(exc).__name__})."); _jeda(); return
 
 
-def _daftar_pengumuman():
+def _daftar_pengumuman(status):
     try:
-        data = engagement_service.daftar_pengumuman_admin(limit=200)
-    except PermissionError as exc:
+        data = engagement_service.daftar_pengumuman_admin(status=status, limit=500)
+    except (PermissionError, ValueError) as exc:
         gagal(str(exc)); _jeda(); return
     except psycopg.Error as exc:
         gagal(f"Pengumuman gagal dimuat ({type(exc).__name__})."); _jeda(); return
 
     if not data:
-        peringatan("Belum ada pengumuman."); _jeda(); return
+        peringatan("Belum ada pengumuman dalam kategori ini."); _jeda(); return
 
-    # Halaman singkat untuk memilih detail tanpa memenuhi terminal dengan semua isi.
     halaman = 0
-    ukuran = 20
+    ukuran = 15
     while True:
         bersihkan_layar()
-        _header("Daftar Pengumuman", "Pengumuman global yang dapat dilihat siswa")
-        tabel = Table(title="Pengumuman terbaru", header_style="bold cyan", expand=True)
+        judul = "Pengumuman Aktif" if status == "aktif" else "Arsip Pengumuman"
+        subjudul = "Pilih satu judul untuk melihat detail" if status == "aktif" else "Arsip bersifat permanen dan tidak dapat dipulihkan"
+        _header(judul, subjudul)
+        tabel = Table(title=judul, header_style="bold cyan", expand=True)
         tabel.add_column("ID", width=6, justify="right")
         tabel.add_column("Judul", min_width=25, overflow="fold")
-        tabel.add_column("Dibuat oleh", min_width=18, overflow="fold")
+        tabel.add_column("Penerima", min_width=15)
         tabel.add_column("Waktu", min_width=17)
         potong = data[halaman * ukuran:(halaman + 1) * ukuran]
         for item in potong:
-            tabel.add_row(Text(str(item["id"])), Text(str(item.get("judul") or "")),
-                          Text(str(item.get("nama_pembuat") or "-")), Text(_waktu(item.get("created_at"))))
+            target = ", ".join(_LABEL_ROLE.get(role, role) for role in item.get("target_roles", [])) or "-"
+            tabel.add_row(str(item["id"]), str(item.get("judul") or ""), target, _waktu(item.get("created_at")))
         console.print(tabel)
-        opsi = [Choice(f"Buka detail ID {item['id']} — {str(item.get('judul') or '')[:55]}", value=item["id"]) for item in potong]
+        opsi = [Choice(f"{str(item.get('judul') or 'Tanpa judul')[:65]}  •  ID {item['id']}", value=item["id"]) for item in potong]
         if halaman > 0:
             opsi.append(Choice("Halaman sebelumnya", value="prev"))
         if (halaman + 1) * ukuran < len(data):
@@ -97,31 +131,48 @@ def _daftar_pengumuman():
         elif pilihan == "next":
             halaman = min((len(data) - 1) // ukuran, halaman + 1)
         else:
-            item = next((row for row in data if row["id"] == pilihan), None)
+            item = next((row for row in potong if row["id"] == pilihan), None)
             if item:
-                _detail_pengumuman(item)
+                _detail_pengumuman(item, status)
+                # Muat ulang setelah detail, terutama bila pengumuman baru saja diarsipkan.
+                try:
+                    data = engagement_service.daftar_pengumuman_admin(status=status, limit=500)
+                except (PermissionError, ValueError, psycopg.Error) as exc:
+                    gagal(f"Daftar pengumuman gagal dimuat ulang: {exc}"); _jeda(); return
+                if not data:
+                    return
+                halaman = min(halaman, (len(data) - 1) // ukuran)
 
 
 def _buat_pengumuman():
     bersihkan_layar()
-    _header("Buat Pengumuman", "Pengumuman ini akan terlihat pada dashboard siswa")
+    _header("Buat Pengumuman", "Terbitkan notifikasi untuk role yang dipilih")
     judul = questionary.text("Judul pengumuman (maks. 150 karakter):", style=GAYA).ask()
     if judul is None:
         return
-    isi_input = questionary.text(
-        "Isi pengumuman (gunakan \\n untuk baris baru):", style=GAYA,
-    ).ask()
+    isi_input = questionary.text("Isi pengumuman (gunakan \\n untuk baris baru):", style=GAYA).ask()
     if isi_input is None:
         return
     isi = isi_input.replace("\\n", "\n").strip()
+    penerima = questionary.checkbox(
+        "Pilih penerima (minimal satu):",
+        choices=[Choice("Siswa", value="siswa"), Choice("Tutor", value="tutor")],
+        style=GAYA,
+    ).ask()
+    if penerima is None:
+        return
+    if not penerima:
+        gagal("Pilih minimal satu penerima pengumuman."); _jeda(); return
+    label = " dan ".join(_LABEL_ROLE[role] for role in penerima)
     konfirmasi = questionary.confirm(
-        "Terbitkan pengumuman untuk semua siswa?", default=False, style=GAYA,
+        f"Terbitkan pengumuman untuk: {label}? (Notifikasi dalam aplikasi, bukan email)",
+        default=False, style=GAYA,
     ).ask()
     if not konfirmasi:
         peringatan("Pembuatan pengumuman dibatalkan."); _jeda(); return
     try:
-        item = engagement_service.buat_pengumuman(judul, isi)
-        sukses(f"Pengumuman ID {item['id']} berhasil diterbitkan.")
+        item = engagement_service.buat_pengumuman(judul, isi, penerima)
+        sukses(f"Pengumuman ID {item['id']} berhasil diterbitkan untuk {label}.")
     except (ValueError, PermissionError) as exc:
         gagal(str(exc))
     except psycopg.Error as exc:
@@ -131,26 +182,29 @@ def _buat_pengumuman():
 
 def menu_pengumuman_admin():
     if not session.punya_role("admin"):
-        peringatan("Akses pengumuman ditolak. Login sebagai admin.")
+        peringatan("Akses komunikasi ditolak. Login sebagai admin.")
         return
     while session.punya_role("admin"):
         bersihkan_layar()
-        _header("Pengumuman", "Komunikasi resmi admin kepada siswa")
+        _header("Menu Komunikasi", "Pengelolaan pengumuman dan arsip")
         pilihan = questionary.select(
             "Pilih tindakan:",
             choices=[
-                Choice("Buat pengumuman", value="buat"),
-                Choice("Daftar pengumuman", value="daftar"),
+                Choice("Buat Pengumuman", value="buat"),
+                Choice("Pengumuman Aktif", value="aktif"),
+                Choice("Arsip Pengumuman", value="arsip"),
                 Separator("────────────────────────"),
-                Choice("Kembali ke dashboard", value="kembali"),
+                Choice("Kembali", value="kembali"),
             ], style=GAYA, qmark="⚡", pointer="▶",
         ).ask()
         if pilihan in (None, "kembali"):
             return
         if pilihan == "buat":
             _buat_pengumuman()
-        elif pilihan == "daftar":
-            _daftar_pengumuman()
+        elif pilihan == "aktif":
+            _daftar_pengumuman("aktif")
+        elif pilihan == "arsip":
+            _daftar_pengumuman("arsip")
 
 
 def _render_log(data, judul):

@@ -11,7 +11,7 @@ from rich.text import Text
 from app import session
 from app.repositories import enrollment_repo, program_repo, user_repo
 from app.services import billing_service, enrollment_service, engagement_service, student_service
-from app.ui import menu_pembayaran, menu_siswa_academic
+from app.ui import menu_pembayaran, menu_siswa_academic, menu_notifikasi
 from app.ui.console import (
     bersihkan_layar,
     console,
@@ -130,42 +130,6 @@ def _tabel_pendaftaran(enrollments, judul="Kelas dan Status Pendaftaran"):
     console.print(tabel)
 
 
-def _tampilkan_pengumuman_terbaru():
-    """Tampilkan pengumuman global terbaru pada dashboard aktif siswa."""
-    try:
-        daftar = engagement_service.pengumuman_terbaru_siswa(limit=3)
-    except (psycopg.Error, PermissionError, ValueError):
-        peringatan("Pengumuman belum dapat dimuat saat ini.")
-        return
-    if not daftar:
-        return
-
-    isi = Text()
-    for index, item in enumerate(daftar):
-        if index:
-            isi.append("\n\n" + "─" * 46 + "\n\n", style="dim")
-        judul = str(item.get("judul") or "Tanpa judul")
-        isi.append(judul + "\n", style="bold cyan")
-        teks = " ".join(str(item.get("isi") or "").split())
-        if len(teks) > 220:
-            teks = teks[:217] + "..."
-        isi.append(teks or "(Tidak ada isi)", style="white")
-        created_at = item.get("created_at")
-        if created_at:
-            try:
-                waktu = created_at.strftime("%d %b %Y %H:%M")
-            except AttributeError:
-                waktu = str(created_at)
-            isi.append("\n" + waktu, style="dim")
-    console.print(Panel(
-        isi,
-        title="[bold cyan]PENGUMUMAN TERBARU[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2),
-        expand=True,
-    ))
-
-
 def _dashboard(pengguna, enrollments):
     bersihkan_layar()
     console.print(
@@ -263,7 +227,6 @@ def _dashboard(pengguna, enrollments):
     except Exception:
         peringatan("Ringkasan tagihan sementara tidak dapat dimuat.")
 
-    _tampilkan_pengumuman_terbaru()
 
 
 def menu_katalog(pengguna):
@@ -634,6 +597,7 @@ def jalankan():
                 Choice("📊  Nilai dan Rapor", value="nilai"),
                 Choice("💳  Tagihan dan Pembayaran", value="pembayaran"),
                 Choice("📖  Catatan Materi", value="materi"),
+                Choice("🔔  Notifikasi", value="notifikasi"),
                 Choice("🤖  Tanya AI (opsional)", value="ai"),
                 Choice("👤  Profil Saya", value="profil"),
                 Separator("────────────────────────"),
@@ -665,6 +629,8 @@ def jalankan():
             menu_pembayaran.menu_pembayaran_siswa()
         elif pilihan == "materi":
             menu_siswa_academic.menu_catatan_materi()
+        elif pilihan == "notifikasi":
+            menu_notifikasi.jalankan("siswa")
         elif pilihan == "ai":
             menu_siswa_academic.menu_tanya_ai_info()
         elif pilihan == "profil":

@@ -46,7 +46,7 @@ MENU_ADMIN = [
     ("Jadwal", "jadwal"),
     ("Pembayaran", "pembayaran"),
     ("Laporan", "laporan"),
-    ("Pengumuman", "pengumuman"),
+    ("Komunikasi", "pengumuman"),
     ("Log Aktivitas", "log"),
 ]
 
