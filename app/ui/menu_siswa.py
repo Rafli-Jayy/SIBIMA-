@@ -68,7 +68,8 @@ def _ambil_pendaftaran(student_id):
 
 
 def _kartu_ringkas(enrollments):
-    aktif = [item for item in enrollments if item["status"] == "aktif"]
+    aktif = [item for item in enrollments if item["status"] == "aktif" and not item.get("akses_terkunci")]
+    terkunci = [item for item in enrollments if item["status"] == "aktif" and item.get("akses_terkunci")]
     menunggu = [item for item in enrollments if item["status"] == "menunggu"]
     menunggu_bayar = [item for item in enrollments if item["status"] == "menunggu_pembayaran"]
     riwayat = [
@@ -78,7 +79,7 @@ def _kartu_ringkas(enrollments):
 
     kartu = [
         Panel(
-            f"[bold green]{len(aktif)}[/bold green]\n[white]Kelas aktif[/white]",
+            f"[bold green]{len(aktif)}[/bold green]\n[white]Kelas dapat diakses[/white]\n[dim]{len(terkunci)} terkunci karena tunggakan[/dim]",
             title="[bold]KELAS[/bold]",
             border_style="green" if aktif else "dim",
             expand=True,
@@ -110,7 +111,9 @@ def _tabel_pendaftaran(enrollments, judul="Kelas dan Status Pendaftaran"):
         dibuat = item.get("created_at")
         tanggal = dibuat.strftime("%d %b %Y") if dibuat else "-"
         status = item.get("status", "-")
-        if status == "aktif":
+        if status == "aktif" and item.get("akses_terkunci"):
+            gaya = "red"
+        elif status == "aktif":
             gaya = "green"
         elif status in {"menunggu", "menunggu_pembayaran"}:
             gaya = "yellow"
@@ -121,7 +124,7 @@ def _tabel_pendaftaran(enrollments, judul="Kelas dan Status Pendaftaran"):
         tabel.add_row(
             str(item.get("nama_program") or "-"),
             str(item.get("jenjang") or "-"),
-            f"[{gaya}]{STATUS_LABEL.get(status, status.upper())}[/{gaya}]",
+            f"[{gaya}]{'AKSES TERKUNCI (TAGIHAN)' if item.get('akses_terkunci') else STATUS_LABEL.get(status, status.upper())}[/{gaya}]",
             tanggal,
         )
 
@@ -153,7 +156,8 @@ def _dashboard(pengguna, enrollments):
         )
     )
 
-    aktif = [item for item in enrollments if item["status"] == "aktif"]
+    aktif = [item for item in enrollments if item["status"] == "aktif" and not item.get("akses_terkunci")]
+    terkunci = [item for item in enrollments if item["status"] == "aktif" and item.get("akses_terkunci")]
     menunggu = [item for item in enrollments if item["status"] == "menunggu"]
     menunggu_bayar = [item for item in enrollments if item["status"] == "menunggu_pembayaran"]
 
@@ -185,6 +189,18 @@ def _dashboard(pengguna, enrollments):
                     border_style="green",
                     padding=(1, 2),
                     expand=True,
+                )
+            )
+        if terkunci:
+            console.print(
+                Panel(
+                    "\n".join(
+                        f"[red]•[/red] {item['nama_program']} — tagihan melewati H+3; "
+                        "buka Tagihan dan Pembayaran"
+                        for item in terkunci[:5]
+                    ),
+                    title="[bold red]AKSES KELAS TERKUNCI[/bold red]",
+                    border_style="red", padding=(1, 2), expand=True,
                 )
             )
         if menunggu_bayar:

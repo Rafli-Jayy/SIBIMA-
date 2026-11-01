@@ -3,6 +3,7 @@
 from psycopg.rows import dict_row
 
 from app.db import pool
+from app.repositories.class_access_sql import AKSES_TERKUNCI_SQL
 
 
 _HARI_ORDER_SQL = """CASE sc.hari::text
@@ -23,9 +24,10 @@ def daftar_kelas(student_id: int) -> list[dict]:
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT e.id AS enrollment_id, e.program_id, e.status,
                        e.created_at, e.processed_at, e.alasan_tolak,
+                       {AKSES_TERKUNCI_SQL} AS akses_terkunci,
                        p.kode, p.nama AS nama_program, p.jenjang,
                        p.harga_bulanan, p.deskripsi,
                        COALESCE((
@@ -51,8 +53,9 @@ def daftar_program_akademik(student_id: int) -> list[dict]:
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT e.id AS enrollment_id, e.program_id, e.status AS status_enrollment,
+                       {AKSES_TERKUNCI_SQL} AS akses_terkunci,
                        p.kode, p.nama AS nama_program, p.jenjang
                 FROM enrollments e
                 JOIN programs p ON p.id = e.program_id
@@ -112,6 +115,7 @@ def daftar_jadwal(student_id: int, hari: str | None = None, program_id: int | No
                       WHERE e.student_id = %s
                         AND e.program_id = sc.program_id
                         AND e.status = 'aktif'
+                        AND NOT {AKSES_TERKUNCI_SQL}
                   )
                   AND (%s::nama_hari IS NULL OR sc.hari = %s::nama_hari)
                   AND (%s::integer IS NULL OR p.id = %s::integer)
@@ -130,7 +134,7 @@ def rekap_absensi(student_id: int, program_id: int | None = None) -> list[dict]:
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT p.id AS program_id, p.nama AS nama_program,
                        r.total_pertemuan, r.hadir, r.izin, r.sakit, r.alpa,
                        r.persen_hadir
@@ -138,6 +142,7 @@ def rekap_absensi(student_id: int, program_id: int | None = None) -> list[dict]:
                 JOIN programs p ON p.id = r.program_id
                 JOIN enrollments e ON e.student_id = r.student_id AND e.program_id = p.id
                 WHERE r.student_id = %s
+                  AND NOT {AKSES_TERKUNCI_SQL}
                   AND (%s::integer IS NULL OR p.id = %s::integer)
                 ORDER BY p.nama;
                 """,
@@ -157,7 +162,7 @@ def daftar_absensi(student_id: int, program_id: int | None = None, limit: int = 
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT cs.tanggal, cs.pertemuan_ke, cs.topik,
                        p.id AS program_id, p.nama AS nama_program,
                        a.status::text AS status_absensi, a.keterangan
@@ -167,6 +172,7 @@ def daftar_absensi(student_id: int, program_id: int | None = None, limit: int = 
                 JOIN programs p ON p.id = sc.program_id
                 JOIN enrollments e ON e.student_id = a.student_id AND e.program_id = p.id
                 WHERE a.student_id = %s
+                  AND NOT {AKSES_TERKUNCI_SQL}
                   AND (%s::integer IS NULL OR p.id = %s::integer)
                 ORDER BY cs.tanggal DESC, cs.pertemuan_ke DESC
                 LIMIT %s;
@@ -184,7 +190,7 @@ def ringkasan_nilai(student_id: int, program_id: int | None = None) -> list[dict
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT e.id AS enrollment_id, p.id AS program_id,
                        p.kode, p.nama AS nama_program, p.jenjang,
                        p.bobot_tugas, p.bobot_kuis, p.bobot_uts, p.bobot_uas,
@@ -194,6 +200,7 @@ def ringkasan_nilai(student_id: int, program_id: int | None = None) -> list[dict
                 JOIN programs p ON p.id = e.program_id
                 LEFT JOIN v_nilai_akhir v ON v.enrollment_id = e.id
                 WHERE e.student_id = %s
+                  AND NOT {AKSES_TERKUNCI_SQL}
                   AND (%s::integer IS NULL OR p.id = %s::integer)
                 ORDER BY p.nama;
                 """,
@@ -212,7 +219,7 @@ def daftar_nilai(student_id: int, program_id: int, limit: int = 500) -> list[dic
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT g.id AS grade_id, g.jenis::text AS jenis, g.judul,
                        g.nilai, g.tanggal, p.nama AS nama_program,
                        COALESCE(tu.nama_lengkap, tu.username, '-') AS nama_tutor
@@ -221,6 +228,7 @@ def daftar_nilai(student_id: int, program_id: int, limit: int = 500) -> list[dic
                 JOIN programs p ON p.id = e.program_id
                 LEFT JOIN users tu ON tu.id = g.input_by
                 WHERE e.student_id = %s
+                  AND NOT {AKSES_TERKUNCI_SQL}
                   AND e.program_id = %s
                 ORDER BY g.jenis, g.tanggal DESC, g.id DESC
                 LIMIT %s;
@@ -240,7 +248,7 @@ def daftar_catatan_materi(student_id: int, program_id: int, limit: int = 300) ->
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT cs.id AS session_id, cs.tanggal, cs.pertemuan_ke,
                        cs.topik, cs.ringkasan, p.nama AS nama_program,
                        COALESCE(tu.nama_lengkap, '-') AS nama_tutor
@@ -251,6 +259,7 @@ def daftar_catatan_materi(student_id: int, program_id: int, limit: int = 300) ->
                 JOIN tutors t ON t.user_id = sc.tutor_id
                 JOIN users tu ON tu.id = t.user_id
                 WHERE p.id = %s
+                  AND NOT {AKSES_TERKUNCI_SQL}
                   AND cs.status = 'terlaksana'
                   AND (NULLIF(BTRIM(cs.topik), '') IS NOT NULL
                        OR NULLIF(BTRIM(cs.ringkasan), '') IS NOT NULL)

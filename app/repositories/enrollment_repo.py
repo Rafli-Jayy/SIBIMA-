@@ -3,6 +3,7 @@
 from psycopg.rows import dict_row
 
 from app.db import pool
+from app.repositories.class_access_sql import AKSES_TERKUNCI_SQL
 from app.repositories.billing_repo import buat_invoice_awal
 
 
@@ -238,7 +239,7 @@ def enrollment_siswa(student_id: int):
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     e.id AS enrollment_id,
                     e.student_id,
@@ -249,6 +250,7 @@ def enrollment_siswa(student_id: int):
                     p.deskripsi,
                     p.harga_bulanan,
                     e.status,
+                    {AKSES_TERKUNCI_SQL} AS akses_terkunci,
                     e.alasan_tolak,
                     e.created_at,
                     e.processed_at
@@ -562,10 +564,12 @@ def pindahkan_admin(
 ) -> dict:
     """Pindahkan enrollment aktif tanpa memindahkan riwayat invoice ke program baru.
 
-    Enrollment lama dipertahankan sebagai selesai. Enrollment baru menjadi aktif.
-    Tagihan periode berjalan yang belum lunas dibatalkan dan dibuat ulang untuk
-    program tujuan. Jika periode berjalan sudah lunas, tagihan lama dipertahankan
-    dan tidak dibuat tagihan kedua pada bulan yang sama.
+    Enrollment lama dipertahankan sebagai selesai, dan invoice bersejarah tetap
+    melekat pada enrollment asal. Jika bulan berjalan sudah lunas, enrollment
+    tujuan langsung aktif tanpa tagihan kedua. Jika tujuan gratis, langsung aktif.
+    Jika tujuan berbayar dan bulan berjalan belum lunas, invoice pengganti dibuat
+    dan enrollment baru berstatus menunggu_pembayaran. Sesudah pembayaran,
+    keputusan admin atas enrollment tujuan tetap mengikuti alur pendaftaran biasa.
     """
     if type(enrollment_id) is not int or enrollment_id <= 0:
         raise ValueError("ID pendaftaran tidak valid.")
@@ -675,15 +679,23 @@ def pindahkan_admin(
                     (invoice_berjalan["id"],),
                 )
 
+            # Tidak membuka akses kelas baru bila program tujuan berbayar dan
+            # kewajiban bulan ini belum lunas. Gunakan status yang sudah dikenali
+            # checkout simulasi dan antrean konfirmasi admin.
+            perlu_pembayaran_baru = (
+                not periode_sudah_lunas and tujuan["harga_bulanan"] > 0
+            )
+            status_baru = "menunggu_pembayaran" if perlu_pembayaran_baru else "aktif"
+
             # Buat enrollment baru agar invoice masa lalu tetap melekat pada program asal.
             cur.execute(
                 """
                 INSERT INTO enrollments (
                     student_id, program_id, status, processed_by, processed_at
-                ) VALUES (%s, %s, 'aktif', %s, now())
+                ) VALUES (%s, %s, %s, %s, now())
                 RETURNING id;
                 """,
-                (asal["student_id"], program_tujuan_id, processed_by),
+                (asal["student_id"], program_tujuan_id, status_baru, processed_by),
             )
             enrollment_baru_id = cur.fetchone()["id"]
 
@@ -697,10 +709,12 @@ def pindahkan_admin(
             )
 
             invoice_baru = None
-            if not periode_sudah_lunas:
+            if perlu_pembayaran_baru:
                 invoice_baru = buat_invoice_awal(
                     cur, enrollment_baru_id, tujuan["harga_bulanan"]
                 )
+                if invoice_baru is None:
+                    raise RuntimeError("Tagihan program tujuan gagal dibuat; pemindahan dibatalkan.")
 
             cur.execute(
                 """
@@ -719,7 +733,11 @@ def pindahkan_admin(
     if periode_sudah_lunas:
         catatan_tagihan = "Tagihan periode berjalan yang sudah lunas dipertahankan; tidak dibuat tagihan kedua bulan ini."
     elif invoice_baru:
-        catatan_tagihan = f"Tagihan baru {invoice_baru['no_invoice']} sebesar Rp {invoice_baru['jumlah']:,.0f} dibuat untuk program tujuan."
+        catatan_tagihan = (
+            f"Tagihan baru {invoice_baru['no_invoice']} sebesar Rp "
+            f"{invoice_baru['jumlah']:,.0f} dibuat untuk program tujuan. "
+            "Kelas tujuan menunggu pembayaran dan konfirmasi admin sebelum aktif."
+        )
     else:
         catatan_tagihan = "Program tujuan gratis, jadi tidak dibuat tagihan baru."
     return {
@@ -730,6 +748,7 @@ def pindahkan_admin(
         ),
         "enrollment_lama_id": enrollment_id,
         "enrollment_baru_id": enrollment_baru_id,
+        "status_baru": status_baru,
         "invoice": invoice_baru,
     }
 

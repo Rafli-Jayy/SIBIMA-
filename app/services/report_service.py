@@ -194,6 +194,11 @@ def ekspor_excel(kode: str) -> Path:
             if isinstance(value, Decimal):
                 value = float(value)
             cell = sheet.cell(row_index, col_index, value)
+            if isinstance(value, str):
+                # openpyxl otomatis mengubah teks berawalan '=' menjadi formula.
+                # Simpan semua input teks sebagai string literal, tanpa mengubah
+                # isi asli atau tipe sel angka/tanggal.
+                cell.data_type = "s"
             cell.font = Font(name="Aptos", size=10, color="203047")
             cell.border = thin_bottom
             cell.alignment = Alignment(vertical="center", horizontal="right" if isinstance(value, (int, float)) else "left")

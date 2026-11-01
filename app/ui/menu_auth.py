@@ -42,6 +42,10 @@ def tampilkan_header(halaman="Utama"):
             "S I B I M A   K E C E",
             "V E R I F I K A S I   E M A I L",
         ),
+        "Lupa Password": (
+            "R E S E T   P A S S W O R D",
+            "P E M U L I H A N   A K U N   D E N G A N   O T P",
+        ),
         "Ganti Password Sementara": (
             "G A N T I   P A S S W O R D",
             "P E R G A N T I A N   P A S S W O R D   W A J I B",
@@ -327,6 +331,62 @@ def menu_register():
     else:
         gagal(f"Registrasi Gagal: {pesan}")
 
+def menu_lupa_password():
+    """Pemulihan akun via email + OTP; tanpa login atau password lama."""
+    bersihkan_layar()
+    tampilkan_header("Lupa Password")
+    console.print(Panel(
+        "Masukkan email terdaftar. Jika memenuhi syarat, kode OTP akan "
+        "dikirim ke email tersebut. Jangan bagikan OTP kepada siapa pun.",
+        title="[bold cyan]PEMULIHAN PASSWORD[/bold cyan]",
+        border_style="cyan", padding=(1, 2),
+    ))
+    email = questionary.text(
+        "Email terdaftar:", style=tema_sibima, qmark="📧"
+    ).ask()
+    if email is None:
+        return
+
+    berhasil, pesan = auth_service.minta_otp_reset_password(email)
+    if not berhasil:
+        gagal(pesan)
+        return
+
+    bersihkan_layar()
+    tampilkan_header("Lupa Password")
+    info(pesan)
+    console.print(
+        "[dim]Jika belum menerima OTP, periksa Spam. "
+        "Untuk meminta kode baru, kembali ke menu Lupa Kata Sandi.[/dim]"
+    )
+    kode = questionary.text(
+        "Kode OTP (6 angka):", style=tema_sibima, qmark="🔐"
+    ).ask()
+    if kode is None:
+        return
+
+    baru = questionary.password(
+        "Password baru (8-64 karakter; huruf dan angka):",
+        style=tema_sibima, qmark="🔑",
+    ).ask()
+    if baru is None:
+        return
+    konfirmasi = questionary.password(
+        "Ulangi password baru:", style=tema_sibima, qmark="🔁"
+    ).ask()
+    if konfirmasi is None:
+        return
+    if baru != konfirmasi:
+        gagal("Konfirmasi password tidak sama. Silakan ulangi proses.")
+        return
+
+    berhasil, pesan = auth_service.reset_password(email, kode.strip(), baru)
+    if berhasil:
+        sukses(pesan)
+    else:
+        gagal(pesan)
+
+
 def jalankan():
     while True:
         bersihkan_layar()
@@ -355,8 +415,10 @@ def jalankan():
             menu_login()
         elif pilihan == "Register":
             menu_register()
+        elif pilihan == "Lupa Password":
+            menu_lupa_password()
         else:
-            peringatan(f"Fitur '{pilihan}' sedang dalam pengembangan.")
+            peringatan(f"Menu '{pilihan}' tidak dikenali.")
         
         console.print("\n[dim]Tekan Enter untuk kembali...[/dim]")
         input()

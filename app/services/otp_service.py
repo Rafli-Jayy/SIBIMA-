@@ -82,7 +82,7 @@ def kirim_otp(user_id: int, tujuan: str):
         email_service.tampilkan_otp_simulasi(kode)
 
     elif OTP_MODE == "email":
-        berhasil = email_service.kirim_otp_email(email, kode)
+        berhasil = email_service.kirim_otp_email(email, kode, tujuan=tujuan)
 
         if not berhasil:
             otp_repo.tandai_terpakai(otp_id)
@@ -102,6 +102,12 @@ def verifikasi_otp(user_id: int, kode: str, tujuan: str):
     """Verifikasi OTP dan jalankan tindakan sesuai tujuannya."""
     if tujuan not in TUJUAN_OTP_VALID:
         return False, "Tujuan OTP tidak valid."
+
+    if tujuan == "reset_password":
+        return False, (
+            "Reset password harus melalui fungsi reset_password "
+            "yang mengubah password dan menggunakan OTP secara atomik."
+        )
 
     if not isinstance(kode, str) or not kode.isdigit():
         return False, "Kode OTP harus berupa angka."
@@ -164,11 +170,6 @@ def verifikasi_otp(user_id: int, kode: str, tujuan: str):
             "Email berhasil diverifikasi. "
             "Akun menunggu persetujuan admin."
         )
-
-    if tujuan == "reset_password":
-        # Password belum diubah pada tahap ini.
-        # Pemanggil harus melanjutkan proses reset password.
-        return True, "OTP valid. Silakan lanjutkan reset password."
 
     if tujuan == "login":
         return True, "Verifikasi OTP berhasil."

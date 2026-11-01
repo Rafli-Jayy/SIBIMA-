@@ -221,17 +221,69 @@ def ganti_password(
     return True, "Password berhasil diperbarui."
 
 
-def reset_password(user_id: int, password_baru: str):
-    """Mengatur ulang password; pemanggil wajib telah memverifikasi OTP."""
-    user = user_repo.cari_by_id(user_id)
-    if user is None:
-        return False, "Pengguna tidak ditemukan."
-
+def minta_otp_reset_password(email: str):
+    """Kirim OTP tanpa membocorkan apakah email tersebut terdaftar."""
     try:
-        password_baru = validators.validasi_password(password_baru)
-        hash_baru = security.hash_password(password_baru)
-    except (DataTidakValid, ValueError) as exc:
+        email = validators.validasi_email(email)
+    except DataTidakValid as exc:
         return False, str(exc)
 
-    user_repo.set_password(user_id, hash_baru)
-    return True, "Password berhasil di-reset."
+    pesan_umum = (
+        "Jika email terdaftar dan memenuhi syarat, kode OTP akan dikirim. "
+        "Periksa Inbox/Spam, lalu masukkan kode yang diterima."
+    )
+    user = user_repo.cari_by_email(email)
+    if user is None or not user.get("email_verified") or user.get("status") in {
+        "nonaktif", "ditolak", "belum_verifikasi",
+    }:
+        return True, pesan_umum
+
+    # Hasil pengiriman, termasuk batas permintaan OTP, tidak dibocorkan
+    # melalui status UI untuk mencegah enumerasi akun.
+    try:
+        otp_service.kirim_otp(user["id"], "reset_password")
+    except Exception:
+        # Error teknis tidak boleh mengungkap keberadaan email.
+        pass
+    return True, pesan_umum
+
+
+def reset_password(email: str, kode: str, password_baru: str):
+    """Reset aman: kode OTP diverifikasi dan dihabiskan dalam 1 transaksi.
+
+    Tidak menerima user_id tanpa OTP. Fungsi lama sengaja digantikan
+    karena dapat dipanggil tanpa bukti verifikasi.
+    """
+    from app.config import OTP_MAX_ATTEMPTS
+    from app.repositories import otp_repo
+
+    try:
+        email = validators.validasi_email(email)
+        password_baru = validators.validasi_password(password_baru)
+    except DataTidakValid as exc:
+        return False, str(exc)
+
+    if (
+        not isinstance(kode, str)
+        or len(kode) != 6
+        or not kode.isascii()
+        or not kode.isdigit()
+    ):
+        return False, "Kode OTP harus terdiri dari 6 angka."
+
+    user = user_repo.cari_by_email(email)
+    if user is None or not user.get("email_verified") or user.get("status") in {
+        "nonaktif", "ditolak", "belum_verifikasi",
+    }:
+        return False, "Kode OTP tidak valid atau tidak tersedia."
+
+    if security.verifikasi_password(password_baru, user["password_hash"]):
+        return False, "Password baru harus berbeda dari password sebelumnya."
+
+    hash_baru = security.hash_password(password_baru)
+    return otp_repo.reset_password_dengan_otp(
+        user_id=user["id"],
+        kode=kode,
+        password_hash=hash_baru,
+        batas_percobaan=OTP_MAX_ATTEMPTS,
+    )

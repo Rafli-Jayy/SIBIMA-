@@ -171,12 +171,23 @@ def _program_akademik(*, aktif_saja=False):
     chosen = _pilih_data(
         "Pilih program",
         programs,
-        lambda r: f"{r['nama_program']} | {r['jenjang']} | {r['status_enrollment'].upper()}",
+        lambda r: (f"{r['nama_program']} | {r['jenjang']} | "
+                   f"{'AKSES TERKUNCI - TAGIHAN' if r.get('akses_terkunci') else r['status_enrollment'].upper()}"),
         "program_id",
     )
     if chosen is None:
         return None
-    return next((p for p in programs if p["program_id"] == chosen), None)
+    dipilih = next((p for p in programs if p["program_id"] == chosen), None)
+    if dipilih and dipilih.get("akses_terkunci"):
+        _header("AKSES KELAS TERKUNCI", dipilih["nama_program"])
+        peringatan(
+            "Tagihan kelas ini telah melewati H+3. Silakan lunasi semua "
+            "tagihan tertunggak di menu Tagihan dan Pembayaran. "
+            "Akses akan terbuka otomatis setelah pembayaran berhasil."
+        )
+        _jeda()
+        return None
+    return dipilih
 
 
 
@@ -202,7 +213,9 @@ def menu_kelas_saya():
     _tabel_paginasi(
         "KELAS SAYA", rows,
         [("Program", {"min_width": 24}), ("Jenjang", {"width": 12}), ("Tutor", {"min_width": 20}), ("Status", {"width": 24}), ("Terdaftar", {"width": 15})],
-        lambda r: (str(r.get("nama_program") or "—"), str(r.get("jenjang") or "—"), str(r.get("tutor") or "—"), str(r.get("status") or "—").upper(), _tanggal(r.get("created_at"))),
+        lambda r: (str(r.get("nama_program") or "—"), str(r.get("jenjang") or "—"), str(r.get("tutor") or "—"),
+                   "AKSES TERKUNCI (TAGIHAN)" if r.get("akses_terkunci") else str(r.get("status") or "—").upper(),
+                   _tanggal(r.get("created_at"))),
         subjudul="Program yang sedang diikuti dan riwayat pendaftaran.",
     )
 

@@ -13,7 +13,10 @@ Fungsi yang direncanakan:
 
 
 
+from datetime import datetime, timezone
+
 from psycopg.rows import dict_row
+from app.utils import security
 
 from app.db import pool
 
@@ -151,3 +154,99 @@ def hitung_kirim_terakhir(
             )
 
             return cur.fetchone()[0]
+
+
+def reset_password_dengan_otp(
+    user_id: int, kode: str, password_hash: str, batas_percobaan: int,
+):
+    """Verifikasi OTP dan ganti password dalam transaksi PostgreSQL atomik.
+
+    SELECT FOR UPDATE mencegah dua permintaan bersamaan memakai OTP sama.
+    Kegagalan penulisan users membuat konsumsi OTP ikut di-rollback.
+    """
+    if batas_percobaan < 1:
+        raise ValueError("Batas percobaan harus minimal 1.")
+
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            # Kunci akun dulu agar reset paralel terserialisasi.
+            cur.execute(
+                """SELECT id, email_verified, status::text AS status
+                   FROM users WHERE id = %s FOR UPDATE;""",
+                (user_id,),
+            )
+            user = cur.fetchone()
+            if user is None or not user["email_verified"] or user["status"] in {
+                "nonaktif", "ditolak", "belum_verifikasi",
+            }:
+                return False, "Kode OTP tidak valid atau tidak tersedia."
+
+            cur.execute(
+                """SELECT id, code_hash, attempts, expires_at
+                   FROM otp_codes
+                   WHERE user_id = %s
+                     AND purpose = 'reset_password'
+                     AND used_at IS NULL
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 1 FOR UPDATE;""",
+                (user_id,),
+            )
+            otp = cur.fetchone()
+            if otp is None:
+                return False, "Kode OTP tidak valid atau sudah digunakan."
+
+            expires_at = otp["expires_at"]
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= datetime.now(timezone.utc):
+                cur.execute(
+                    "UPDATE otp_codes SET used_at = now() WHERE id = %s;",
+                    (otp["id"],),
+                )
+                conn.commit()
+                return False, "Kode OTP kedaluwarsa. Minta kode baru."
+
+            if otp["attempts"] >= batas_percobaan:
+                cur.execute(
+                    "UPDATE otp_codes SET used_at = now() WHERE id = %s;",
+                    (otp["id"],),
+                )
+                conn.commit()
+                return False, "Batas percobaan OTP tercapai. Minta kode baru."
+
+            if not security.verifikasi_otp(kode, otp["code_hash"]):
+                cur.execute(
+                    """UPDATE otp_codes
+                       SET attempts = attempts + 1,
+                           used_at = CASE
+                               WHEN attempts + 1 >= %s THEN now()
+                               ELSE used_at
+                           END
+                       WHERE id = %s AND used_at IS NULL;""",
+                    (batas_percobaan, otp["id"]),
+                )
+                conn.commit()
+                sisa = max(0, batas_percobaan - otp["attempts"] - 1)
+                if sisa == 0:
+                    return False, "Batas percobaan OTP tercapai. Minta kode baru."
+                return False, f"Kode OTP salah. Sisa percobaan: {sisa}."
+
+            cur.execute(
+                """UPDATE users
+                   SET password_hash = %s,
+                       must_change_password = FALSE,
+                       failed_attempts = 0,
+                       locked_until = NULL
+                   WHERE id = %s;""",
+                (password_hash, user_id),
+            )
+            # Habis pakai: semua OTP reset lama ditandai sekaligus.
+            cur.execute(
+                """UPDATE otp_codes SET used_at = now()
+                   WHERE user_id = %s
+                     AND purpose = 'reset_password'
+                     AND used_at IS NULL;""",
+                (user_id,),
+            )
+            conn.commit()
+            return True, "Password berhasil diatur ulang. Silakan login kembali."

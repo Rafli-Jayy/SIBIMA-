@@ -1513,10 +1513,12 @@ def _menu_pindahkan_pendaftaran_admin():
     if target is None:
         return
     console.print(Panel(
-        "Pemindahan akan mengakhiri enrollment lama dan membuat enrollment aktif baru. "
-        "Riwayat tagihan lama tetap disimpan. Tagihan periode berjalan yang belum lunas "
-        "akan diganti sesuai harga program tujuan. Jika periode berjalan sudah lunas, "
-        "tidak akan dibuat tagihan kedua pada bulan ini. Tidak ada prorata/refund otomatis.",
+        "Pemindahan akan mengakhiri enrollment lama dan membuat enrollment baru. "
+        "Riwayat tagihan lama tetap disimpan. Jika bulan berjalan sudah lunas, "
+        "kelas tujuan langsung aktif tanpa tagihan kedua. Program gratis juga langsung "
+        "aktif. Jika program tujuan berbayar dan bulan ini belum lunas, tagihan baru "
+        "dibuat; kelas tujuan MENUNGGU PEMBAYARAN dan konfirmasi admin sebelum aktif. "
+        "Tidak ada prorata/refund otomatis.",
         title="Dampak pemindahan", border_style="yellow", padding=(1, 2), expand=True,
     ))
     yakin = questionary.confirm(

@@ -268,10 +268,26 @@ def tampilkan_otp_simulasi(kode: str) -> None:
     )
 
 
-def _buat_html_email(kode: str) -> str:
+def _buat_html_email(kode: str, tujuan: str = "register") -> str:
     """Membuat template email HTML yang ramah untuk klien email."""
     kode_html = html.escape(kode)
     masa_berlaku = html.escape(str(OTP_EXPIRE_MINUTES))
+    is_reset = tujuan == "reset_password"
+    judul_html = "Atur ulang password kamu" if is_reset else "Verifikasi email kamu ✨"
+    deskripsi_html = (
+        "Kami menerima permintaan untuk mengatur ulang password akun SIBIMA. "
+        "Masukkan kode berikut ke aplikasi untuk melanjutkan."
+        if is_reset else
+        "Terima kasih sudah mendaftar di <strong>SIBIMA KECE</strong>. "
+        "Masukkan kode berikut untuk memverifikasi alamat email dan "
+        "melanjutkan proses aktivasi akunmu."
+    )
+    penutup_html = (
+        "Jika kamu tidak meminta reset password, abaikan email ini."
+        if is_reset else
+        "Jika kamu tidak merasa melakukan pendaftaran atau meminta kode ini, "
+        "abaikan email ini."
+    )
 
     return f"""\
 <!DOCTYPE html>
@@ -279,13 +295,13 @@ def _buat_html_email(kode: str) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Verifikasi Email SIBIMA KECE</title>
+  <title>{"Reset Password" if is_reset else "Verifikasi Email"} SIBIMA KECE</title>
 </head>
 <body style="margin:0;padding:0;background-color:#eef2f7;
              font-family:Arial,Helvetica,sans-serif;color:#172033;">
 
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
-    Kode verifikasi akun SIBIMA KECE kamu sudah siap.
+    {"Kode reset password" if is_reset else "Kode verifikasi email"} SIBIMA KECE kamu sudah siap.
     Kode berlaku selama {masa_berlaku} menit.
   </div>
 
@@ -317,7 +333,7 @@ def _buat_html_email(kode: str) -> str:
 
               <div style="margin-top:12px;font-size:13px;
                           letter-spacing:2px;color:#cbd5e1;">
-                EMAIL VERIFICATION
+                {"PASSWORD RECOVERY" if is_reset else "EMAIL VERIFICATION"}
               </div>
             </td>
           </tr>
@@ -335,7 +351,7 @@ def _buat_html_email(kode: str) -> str:
 
               <h1 style="font-size:25px;line-height:1.35;
                          color:#101b35;margin:22px 0 12px;">
-                Verifikasi email kamu ✨
+                {judul_html}
               </h1>
 
               <p style="font-size:15px;line-height:1.8;
@@ -345,10 +361,7 @@ def _buat_html_email(kode: str) -> str:
 
               <p style="font-size:15px;line-height:1.8;
                         color:#475569;margin:0 0 24px;">
-                Terima kasih sudah mendaftar di
-                <strong>SIBIMA KECE</strong>. Masukkan kode berikut
-                untuk memverifikasi alamat email dan melanjutkan
-                proses aktivasi akunmu.
+                {deskripsi_html}
               </p>
 
               <!-- OTP CARD -->
@@ -361,7 +374,7 @@ def _buat_html_email(kode: str) -> str:
 
                     <div style="font-size:12px;font-weight:bold;
                                 letter-spacing:2px;color:#0369a1;">
-                      KODE VERIFIKASI OTP
+                      {"KODE RESET PASSWORD" if is_reset else "KODE VERIFIKASI OTP"}
                     </div>
 
                     <div style="margin:20px 0;padding:18px 10px;
@@ -406,9 +419,7 @@ def _buat_html_email(kode: str) -> str:
 
               <p style="margin:24px 0 8px;font-size:13px;
                         line-height:1.8;color:#64748b;">
-                Jika kamu tidak merasa melakukan pendaftaran atau
-                meminta kode ini, abaikan email ini. Jangan bagikan
-                kode kepada siapa pun.
+                {penutup_html} Jangan bagikan kode kepada siapa pun.
               </p>
 
               <p style="font-size:14px;line-height:1.8;
@@ -437,7 +448,7 @@ def _buat_html_email(kode: str) -> str:
 
               <div style="font-size:11px;line-height:1.8;
                           color:#94a3b8;margin-top:8px;">
-                Email otomatis untuk verifikasi akun.<br>
+                Email otomatis dari SIBIMA KECE.<br>
                 Mohon jangan membalas email ini.
               </div>
 
@@ -461,8 +472,10 @@ def _buat_html_email(kode: str) -> str:
 """
 
 
-def kirim_otp_email(email: str, kode: str) -> bool:
+def kirim_otp_email(email: str, kode: str, tujuan: str = "register") -> bool:
     """Mengirim OTP melalui SMTP dengan nama pengirim dan HTML branded."""
+    if tujuan not in {"register", "reset_password", "login"}:
+        return False
     if not isinstance(email, str) or not email.strip():
         return False
 
@@ -487,17 +500,20 @@ def kirim_otp_email(email: str, kode: str) -> bool:
         return False
 
     pesan = EmailMessage()
-    pesan["Subject"] = "Kode Verifikasi Email | SIBIMA KECE"
+    pesan["Subject"] = (
+        "Kode Reset Password | SIBIMA KECE"
+        if tujuan == "reset_password" else "Kode Verifikasi Email | SIBIMA KECE"
+    )
     pesan["From"] = formataddr((NAMA_PENGIRIM, SMTP_USER))
     pesan["To"] = email.strip()
 
     # Versi teks biasa untuk klien email yang tidak mendukung HTML.
     pesan.set_content(
-        f"""SIBIMA KECE - VERIFIKASI EMAIL
+        f"""SIBIMA KECE - {"RESET PASSWORD" if tujuan == "reset_password" else "VERIFIKASI EMAIL"}
 
 Halo, pengguna SIBIMA!
 
-Berikut kode OTP untuk memverifikasi email kamu:
+Berikut kode OTP untuk {"mengatur ulang password" if tujuan == "reset_password" else "memverifikasi email"} kamu:
 
 {kode}
 
@@ -517,7 +533,7 @@ Email otomatis. Mohon jangan membalas email ini.
 
     # Versi HTML untuk tampilan yang lebih menarik.
     pesan.add_alternative(
-        _buat_html_email(kode),
+        _buat_html_email(kode, tujuan=tujuan),
         subtype="html",
     )
 
