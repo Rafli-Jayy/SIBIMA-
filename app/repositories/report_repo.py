@@ -57,7 +57,7 @@ def siswa_per_program() -> list[dict]:
 
 
 def rekap_kehadiran(limit: int = 5000) -> list[dict]:
-    """Rekap absensi per siswa dan program berdasarkan view v_rekap_kehadiran."""
+    """Rekap per enrollment, termasuk arsip batal; sesi belum selesai tidak dihitung."""
     limit = _limit_valid(limit)
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -65,13 +65,41 @@ def rekap_kehadiran(limit: int = 5000) -> list[dict]:
                 """
                 SELECT p.kode AS kode_program, p.nama AS nama_program,
                        st.nis, u.nama_lengkap AS nama_siswa,
+                       r.enrollment_id, r.status_enrollment, r.tanggal_pendaftaran,
                        r.total_pertemuan, r.hadir, r.izin, r.sakit, r.alpa,
                        r.persen_hadir
                 FROM v_rekap_kehadiran AS r
                 JOIN programs AS p ON p.id = r.program_id
                 JOIN students AS st ON st.user_id = r.student_id
                 JOIN users AS u ON u.id = st.user_id
-                ORDER BY p.nama, u.nama_lengkap
+                ORDER BY p.nama, u.nama_lengkap, r.enrollment_id DESC
+                LIMIT %s;
+                """,
+                (limit,),
+            )
+            return cur.fetchall()
+
+
+def absensi_belum_terhubung(limit: int = 5000) -> list[dict]:
+    """Catatan historis NULL untuk pemeriksaan Admin, tanpa pemetaan otomatis."""
+    limit = _limit_valid(limit)
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT p.kode AS kode_program, p.nama AS nama_program,
+                       st.nis, u.nama_lengkap AS nama_siswa,
+                       cs.tanggal, cs.pertemuan_ke,
+                       cs.status::text AS status_pertemuan,
+                       a.status::text AS status_absensi, a.keterangan
+                FROM attendances a
+                JOIN class_sessions cs ON cs.id = a.session_id
+                JOIN schedules s ON s.id = cs.schedule_id
+                JOIN programs p ON p.id = s.program_id
+                JOIN students st ON st.user_id = a.student_id
+                JOIN users u ON u.id = st.user_id
+                WHERE a.enrollment_id IS NULL
+                ORDER BY cs.tanggal DESC, p.nama, u.nama_lengkap
                 LIMIT %s;
                 """,
                 (limit,),

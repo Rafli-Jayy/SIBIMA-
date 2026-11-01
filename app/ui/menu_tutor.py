@@ -10,6 +10,7 @@ from rich.text import Text
 
 from app import session
 from app.ui.console import console, bersihkan_layar, gagal, sukses
+from app.ui.tutor_dashboard_grid import tampilkan_dashboard_tutor
 from app.ui import menu_tutor_academic, menu_notifikasi
 from app.services import engagement_service
 
@@ -25,7 +26,7 @@ _GAYA = Style([
 ])
 
 _MENU_AKADEMIK = [
-    ("Jadwal Mengajar", "jadwal"),
+    ("Jadwal & Detail Kelas", "jadwal"),
     ("Kelas dan Siswa", "kelas"),
     ("Absensi", "absensi"),
     ("Nilai", "nilai"),
@@ -35,38 +36,8 @@ _MENU_AKUN = [("Profil Saya", "profil")]
 
 
 def _dashboard(pengguna):
-    """Render dashboard yang ringkas, tanpa statistik rekaan."""
-    nama = pengguna.get("nama_lengkap") or pengguna.get("username") or "Tutor"
-    username = pengguna.get("username") or "-"
-
-    brand = Text()
-    brand.append("S I B I M A\n", style="bold cyan")
-    brand.append("PORTAL TUTOR\n", style="bold white")
-    brand.append(f"Selamat datang, {nama}  •  @{username}\n", style="white")
-    brand.append("JADWAL  •  KELAS  •  ABSENSI  •  NILAI  •  MATERI  •  PROFIL", style="dim")
-    console.print(Panel(
-        Align.center(brand),
-        border_style="cyan", box=ROUNDED, padding=(1, 3), expand=True,
-    ))
-
-    kategori = Table.grid(expand=True, padding=(0, 1))
-    kategori.add_column(ratio=1)
-    kategori.add_column(ratio=1)
-    kategori.add_row(
-        Panel(
-            "Jadwal Mengajar\nKelas dan Siswa\nAbsensi",
-            title="[bold cyan]PENGELOLAAN KELAS[/bold cyan]",
-            border_style="cyan", box=ROUNDED, padding=(0, 2), expand=True,
-        ),
-        Panel(
-            "Nilai  •  Catatan Materi\nProfil Saya",
-            title="[bold cyan]AKADEMIK & AKUN[/bold cyan]",
-            border_style="cyan", box=ROUNDED, padding=(0, 2), expand=True,
-        ),
-    )
-    console.print(kategori)
-    console.print("[dim]Navigasi: ↑/↓ pilih • Enter buka • Ctrl+C batalkan prompt[/dim]")
-
+    """Tampilkan informasi jadwal dan aktivitas Tutor dari database (PATCH-007B)."""
+    tampilkan_dashboard_tutor(pengguna)
 
 def jalankan():
     while True:

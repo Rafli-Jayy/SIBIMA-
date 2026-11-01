@@ -7,6 +7,7 @@ from rich.align import Align
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.markup import escape
 
 from app import session
 from app.repositories import user_repo, enrollment_repo, program_repo, profile_repo
@@ -22,6 +23,7 @@ from app.ui.console import (
     peringatan,
     sukses,
 )
+from app.ui.admin_dashboard_grid import tampilkan_dashboard_admin, pilih_modul_admin
 
 
 TEMA_ADMIN = Style([
@@ -1070,7 +1072,7 @@ def _tabel_jadwal_admin(daftar, judul="Jadwal Mengajar"):
         ("Tutor", {"overflow": "fold"}),
         ("Ruang", {"no_wrap": True}),
         ("Siswa", {"justify": "right", "no_wrap": True}),
-        ("Pertemuan", {"justify": "right", "no_wrap": True}),
+        ("Sesi tercatat", {"justify": "right", "no_wrap": True}),
         ("Kapasitas", {"justify": "right", "no_wrap": True}),
         ("Status", {"no_wrap": True}),
     ]:
@@ -1157,6 +1159,42 @@ def _pilih_satu_jadwal(pertanyaan, *, hanya_aktif=None):
     return next((x for x in hasil if x["id"] == pilihan), None)
 
 
+def _detail_jadwal_admin(item):
+    """Detail read-only; tidak mengartikan jumlah catatan sebagai sesi selesai."""
+    bersihkan_layar()
+    _tampilkan_header("Detail Jadwal", str(item.get("nama_program") or "—"))
+    konten = (
+        f"[bold]Program[/bold]       : {escape(str(item.get('nama_program') or '—'))} "
+        f"({escape(str(item.get('kode_program') or '—'))})\n"
+        f"[bold]Tutor[/bold]         : {escape(str(item.get('nama_tutor') or '—'))}\n"
+        f"[bold]Ruang[/bold]         : {escape(str(item.get('nama_ruang') or '—'))}\n"
+        f"[bold]Jadwal rutin[/bold] : {escape(str(item.get('hari') or '—').capitalize())} "
+        f"{item['jam_mulai'].strftime('%H:%M')}–{item['jam_selesai'].strftime('%H:%M')}\n"
+        f"[bold]Status jadwal[/bold]: {'Aktif' if item.get('aktif') else 'Nonaktif'}\n"
+        f"[bold]Peserta program[/bold]: {item.get('jumlah_siswa') or 0} enrollment aktif\n"
+        f"[bold]Sesi tercatat[/bold]: {item.get('jumlah_pertemuan') or 0} (termasuk sesi dibatalkan)"
+    )
+    console.print(Panel(konten, title="RINCIAN KELAS & JADWAL", border_style="cyan", expand=True))
+    info("Peserta dihitung per program, bukan per jadwal. Sesi tercatat tidak menjamin absensi lengkap.")
+    _tekan_enter()
+
+
+def _label_opsi_jadwal(jenis, identitas):
+    """Nama untuk ringkasan konfirmasi; fallback ID bila daftar tidak bisa dimuat."""
+    panggil = {"program": schedule_service.opsi_program,
+              "tutor": schedule_service.opsi_tutor,
+              "ruang": schedule_service.opsi_ruang}[jenis]
+    try:
+        ok, rows = panggil(aktif_saja=False)
+        if ok:
+            item = next((r for r in rows if r.get("id") == identitas), None)
+            if item:
+                return str(item.get("nama") or item.get("nama_lengkap") or f"ID {identitas}")
+    except Exception:
+        pass
+    return f"ID {identitas}"
+
+
 def _jadwal_lihat_admin():
     bersihkan_layar()
     _tampilkan_header("Jadwal", "LIHAT JADWAL PER PROGRAM / TUTOR / RUANG / HARI")
@@ -1192,6 +1230,17 @@ def _jadwal_lihat_admin():
         peringatan("Belum ada jadwal untuk filter tersebut.")
     else:
         _tabel_jadwal_admin(hasil)
+        selected = questionary.select("Lihat detail jadwal:", choices=[
+            Choice(f"{r.get('nama_program') or '—'} • {str(r.get('hari') or '').capitalize()} "
+                   f"{r['jam_mulai'].strftime('%H:%M')}–{r['jam_selesai'].strftime('%H:%M')} "
+                   f"• {r.get('nama_tutor') or '—'}", value=r["id"]) for r in hasil
+        ] + [Choice("Kembali", value="__back__")], style=TEMA_ADMIN,
+            qmark="⚡", pointer="▶").ask()
+        if selected not in (None, "__back__"):
+            row = next((r for r in hasil if r["id"] == selected), None)
+            if row:
+                _detail_jadwal_admin(row)
+        return
     _tekan_enter()
 
 
@@ -1217,8 +1266,10 @@ def _jadwal_tambah_admin():
     if jam_selesai is None:
         return
     console.print(Panel(
-        f"Program ID: {program_id}\nTutor ID: {tutor_id}\nRuang ID: {room_id}\n"
-        f"Hari: {hari.capitalize()}\nWaktu: {jam_mulai}–{jam_selesai}",
+        f"Program: {escape(_label_opsi_jadwal('program', program_id))} (ID {program_id})\n"
+        f"Tutor: {escape(_label_opsi_jadwal('tutor', tutor_id))} (ID {tutor_id})\n"
+        f"Ruang: {escape(_label_opsi_jadwal('ruang', room_id))} (ID {room_id})\n"
+        f"Hari: {escape(hari.capitalize())}\nWaktu: {escape(jam_mulai)}–{escape(jam_selesai)}",
         title="Ringkasan Jadwal", border_style="cyan", padding=(1, 2), expand=True,
     ))
     yakin = questionary.confirm("Simpan jadwal ini?", default=False, style=TEMA_ADMIN).ask()
@@ -1380,7 +1431,7 @@ def _detail_pendaftaran_admin(enrollment_id: int):
         ("Tanggal daftar", _format_waktu(detail.get("created_at"))),
         ("Diproses pada", _format_waktu(detail.get("processed_at"))),
         ("Diproses oleh", detail.get("diproses_oleh") or "-"),
-        ("Catatan penolakan", detail.get("alasan_tolak") or "-"),
+        ("Alasan penolakan/pembatalan", detail.get("alasan_tolak") or "-"),
         ("Jumlah tagihan", detail.get("jumlah_tagihan", 0)),
         ("Total tagihan tidak batal", _format_rupiah(detail.get("total_tagihan", 0))),
         ("Total pembayaran lunas", _format_rupiah(detail.get("total_terbayar", 0))),
@@ -1542,15 +1593,41 @@ def _menu_batalkan_pendaftaran_admin():
     )
     if item is None:
         return
+    berhasil_detail, detail = admin_enrollment_service.detail_pendaftaran(item["enrollment_id"])
+    if not berhasil_detail:
+        gagal(detail)
+        _tekan_enter()
+        return
+    if detail["status"] == "menunggu" and detail.get("total_terbayar", 0) > 0:
+        peringatan("Pendaftaran sudah dibayar tetapi belum disetujui. Gunakan Pusat Konfirmasi → Tolak Pendaftaran untuk refund.")
+        _tekan_enter()
+        return
+
     alasan = questionary.text(
         "Alasan pembatalan (opsional):", style=TEMA_ADMIN, qmark="📝",
     ).ask()
     if alasan is None:
         return
+    if len(alasan.strip()) > 1000:
+        peringatan("Alasan maksimal 1000 karakter.")
+        _tekan_enter()
+        return
+    if detail["status"] == "aktif":
+        penjelasan = (
+            "Status kelas menjadi BATAL. Semua pembayaran simulasi yang sudah LUNAS pada "
+            "kelas ini (termasuk bulan-bulan sebelumnya) DIREFUND PENUH otomatis. "
+            "Tagihan belum dibayar dibatalkan dan akses kelas berakhir. "
+            f"Perkiraan total refund: {_format_rupiah(detail.get('total_terbayar', 0))}. "
+            "Riwayat transaksi tetap tersimpan. Tidak ada uang sungguhan yang dipindahkan."
+        )
+    else:
+        penjelasan = (
+            "Pendaftaran menunggu tanpa pembayaran lunas akan menjadi BATAL. "
+            "Tagihan belum dibayar dibatalkan; riwayat tetap tersimpan."
+        )
     console.print(Panel(
-        "Status pendaftaran akan menjadi BATAL. Riwayat tagihan tidak dihapus; "
-        "tagihan yang sudah terbit tetap dapat ditagihkan. Periksa konsekuensi ini sebelum melanjutkan.",
-        title="Konfirmasi pembatalan", border_style="yellow", padding=(1, 2), expand=True,
+        penjelasan, title="Konfirmasi pembatalan", border_style="yellow",
+        padding=(1, 2), expand=True,
     ))
     yakin = questionary.confirm(
         f"Batalkan pendaftaran {item['nama_program']} milik {item['nama_siswa']}?",
@@ -1605,48 +1682,12 @@ def jalankan():
         pengguna = session.get_user() or {}
         nama = pengguna.get("nama_lengkap") or pengguna.get("username") or "Admin"
 
-        console.print(
-            Panel(
-                Align.center(
-                    "[bold cyan]S I B I M A[/bold cyan]\n"
-                    "[bold white]PUSAT KENDALI ADMINISTRATOR[/bold white]"
-                ),
-                border_style="cyan",
-                padding=(1, 4),
-                expand=True,
-            )
-        )
-        console.print(
-            Panel(
-                f"[bold white]Selamat datang, [cyan]{nama}[/cyan]![/bold white]\n"
-                "[dim]ROLE: ADMIN  •  SESI AKTIF[/dim]\n\n"
-                "[white]Pilih modul yang ingin dibuka.[/white]\n"
-                "[dim]Pusat Konfirmasi, Manajemen Akun, Data Siswa/Tutor, "
-                "Program/Ruang, dan Pendaftaran telah dihubungkan ke database.[/dim]",
-                title="[bold cyan]DASHBOARD[/bold cyan]",
-                border_style="bright_blue",
-                padding=(1, 2),
-                expand=True,
-            )
-        )
+        # PATCH-007A: grid ringkasan dibaca ulang setiap kali kembali ke dashboard.
+        tampilkan_dashboard_admin(nama)
+        pilihan = pilih_modul_admin(TEMA_ADMIN)
 
-        pilihan_menu = [
-            Choice(f"  {label}", value=kode)
-            for label, kode in MENU_ADMIN
-        ]
-        pilihan_menu.extend([
-            Separator("────────────────────────"),
-            Choice("  🚪 Logout", value="logout"),
-        ])
-
-        pilihan = questionary.select(
-            "Pilih modul:",
-            choices=pilihan_menu,
-            style=TEMA_ADMIN,
-            qmark="⚡",
-            pointer="▶",
-            instruction=" (Gunakan ↑/↓ lalu Enter)",
-        ).ask()
+        if pilihan == "dashboard":
+            continue
 
         if pilihan is None or pilihan == "logout":
             session.logout()

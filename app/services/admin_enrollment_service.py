@@ -70,6 +70,7 @@ def pindahkan_pendaftaran(enrollment_id: int, program_tujuan_id: int):
 
 
 def batalkan_pendaftaran(enrollment_id: int, alasan: str | None = None):
+    """Batalkan enrollment dan kirim bukti refund setelah transaksi DB commit."""
     admin = _admin_aktif()
     if admin is None:
         return False, "Akses ditolak. Hanya admin aktif yang dapat membatalkan pendaftaran."
@@ -79,12 +80,48 @@ def batalkan_pendaftaran(enrollment_id: int, alasan: str | None = None):
         return False, "Alasan pembatalan maksimal 1000 karakter."
     try:
         hasil = enrollment_repo.batalkan_admin(
-            enrollment_id=enrollment_id,
-            processed_by=admin["id"],
-            alasan=alasan,
+            enrollment_id=enrollment_id, processed_by=admin["id"], alasan=alasan,
         )
     except ValueError as exc:
         return False, str(exc)
-    except psycopg.Error as exc:
-        return False, f"Pembatalan gagal diproses database ({type(exc).__name__})."
-    return bool(hasil.get("berhasil")), hasil.get("pesan", "Pembatalan tidak berhasil.")
+    except (psycopg.Error, RuntimeError) as exc:
+        return False, f"Pembatalan gagal diproses database ({type(exc).__name__}): {exc}"
+    if not hasil.get("berhasil"):
+        return False, hasil.get("pesan", "Pembatalan tidak berhasil.")
+
+    # Email/PDF adalah efek pasca-commit. Kegagalannya tidak mengubah hasil refund.
+    pesan = hasil["pesan"]
+    refunds = hasil.get("refunds") or []
+    if not refunds:
+        return True, pesan
+    try:
+        siswa = user_repo.cari_by_id(hasil["student_id"])
+    except Exception as exc:
+        return True, pesan + f" Data siswa untuk pengiriman bukti tidak dapat dibaca ({type(exc).__name__})."
+    if not siswa or not siswa.get("email"):
+        return True, pesan + " Email siswa tidak ditemukan; refund tetap tercatat."
+
+    from app.services import billing_receipt_service
+    gagal_kirim = 0
+    for refund in refunds:
+        detail = {
+            **refund,
+            "jenis_refund": "pembatalan",
+            "nama_siswa": siswa.get("nama_lengkap"),
+            "email_siswa": siswa.get("email"),
+            "nama_program": hasil["nama_program"],
+            "alasan": hasil["alasan"],
+        }
+        try:
+            pdf = billing_receipt_service.buat_pdf_bukti_refund(detail)
+            terkirim, _ = billing_receipt_service.kirim_pdf_refund_via_email(detail, pdf)
+            if not terkirim:
+                gagal_kirim += 1
+        except Exception:
+            gagal_kirim += 1
+    if gagal_kirim:
+        return True, (
+            pesan + f" Refund sudah tercatat, tetapi {gagal_kirim} dari "
+            f"{len(refunds)} email/PDF bukti belum berhasil dikirim."
+        )
+    return True, pesan + f" {len(refunds)} email dan PDF bukti refund dikirim."

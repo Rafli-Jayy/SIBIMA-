@@ -3,7 +3,7 @@
 from psycopg.rows import dict_row
 
 from app.db import pool
-from app.repositories.class_access_sql import AKSES_TERKUNCI_SQL
+from app.repositories.class_access_sql import AKSES_TERKUNCI_SQL, ENROLLMENT_TERAKHIR_TERSEDIA_SQL
 
 
 _HARI_ORDER_SQL = """CASE sc.hari::text
@@ -60,25 +60,8 @@ def daftar_program_akademik(student_id: int) -> list[dict]:
                 FROM enrollments e
                 JOIN programs p ON p.id = e.program_id
                 WHERE e.student_id = %s
-                  AND (
-                      e.status IN ('aktif', 'selesai')
-                      OR EXISTS (SELECT 1 FROM grades g WHERE g.enrollment_id = e.id)
-                      OR EXISTS (
-                          SELECT 1
-                          FROM attendances a
-                          JOIN class_sessions cs ON cs.id = a.session_id
-                          JOIN schedules sc ON sc.id = cs.schedule_id
-                          WHERE a.student_id = e.student_id AND sc.program_id = e.program_id
-                      )
-                      OR EXISTS (
-                          SELECT 1
-                          FROM class_sessions cs
-                          JOIN schedules sc ON sc.id = cs.schedule_id
-                          WHERE sc.program_id = e.program_id
-                            AND (NULLIF(BTRIM(cs.topik), '') IS NOT NULL
-                                 OR NULLIF(BTRIM(cs.ringkasan), '') IS NOT NULL)
-                      )
-                  )
+                  AND e.status IN ('aktif', 'selesai')
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
                 ORDER BY CASE e.status WHEN 'aktif' THEN 0 WHEN 'selesai' THEN 1 ELSE 2 END,
                          p.nama, e.id DESC;
                 """,
@@ -126,8 +109,48 @@ def daftar_jadwal(student_id: int, hari: str | None = None, program_id: int | No
             return cur.fetchall()
 
 
+
+def daftar_pertemuan_siswa(student_id: int, program_id: int, limit: int = 50) -> list[dict]:
+    """Catatan sesi yang tersimpan untuk enrollment AKTIF terbaru milik siswa.
+
+    Status 'terlaksana' di schema lama berarti record ada, bukan bukti absensi lengkap.
+    """
+    _valid_id(student_id, "ID siswa")
+    _valid_id(program_id, "ID program")
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Batas riwayat pertemuan tidak valid.")
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"""
+                SELECT cs.id AS session_id, cs.schedule_id, cs.tanggal, cs.pertemuan_ke,
+                       cs.topik, cs.ringkasan, cs.status::text AS status_pertemuan,
+                       sc.hari::text AS hari, sc.jam_mulai, sc.jam_selesai,
+                       r.nama AS nama_ruang, tu.nama_lengkap AS nama_tutor,
+                       a.status::text AS status_absensi
+                FROM enrollments e
+                JOIN schedules sc ON sc.program_id = e.program_id
+                JOIN class_sessions cs ON cs.schedule_id = sc.id
+                JOIN rooms r ON r.id = sc.room_id
+                JOIN users tu ON tu.id = sc.tutor_id
+                LEFT JOIN attendances a ON a.session_id = cs.id
+                                       AND a.enrollment_id = e.id AND a.student_id = e.student_id
+                WHERE e.student_id = %s
+                  AND e.program_id = %s
+                  AND e.status = 'aktif'
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
+                  AND NOT {AKSES_TERKUNCI_SQL}
+                  AND cs.tanggal >= e.created_at::date
+                ORDER BY cs.tanggal DESC, cs.id DESC
+                LIMIT %s;
+                """,
+                (student_id, program_id, limit),
+            )
+            return cur.fetchall()
+
+
 def rekap_absensi(student_id: int, program_id: int | None = None) -> list[dict]:
-    """Ringkasan presensi per program dari view laporan."""
+    """Hanya enrollment terbaru yang masih dapat diakses; hitung absensi sesi selesai."""
     _valid_id(student_id, "ID siswa")
     if program_id is not None:
         _valid_id(program_id, "ID program")
@@ -135,15 +158,28 @@ def rekap_absensi(student_id: int, program_id: int | None = None) -> list[dict]:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 f"""
-                SELECT p.id AS program_id, p.nama AS nama_program,
-                       r.total_pertemuan, r.hadir, r.izin, r.sakit, r.alpa,
-                       r.persen_hadir
-                FROM v_rekap_kehadiran r
-                JOIN programs p ON p.id = r.program_id
-                JOIN enrollments e ON e.student_id = r.student_id AND e.program_id = p.id
-                WHERE r.student_id = %s
+                SELECT e.id AS enrollment_id, p.id AS program_id, p.nama AS nama_program,
+                       COUNT(sc.id)::int AS total_pertemuan,
+                       COUNT(sc.id) FILTER (WHERE a.status = 'H')::int AS hadir,
+                       COUNT(sc.id) FILTER (WHERE a.status = 'I')::int AS izin,
+                       COUNT(sc.id) FILTER (WHERE a.status = 'S')::int AS sakit,
+                       COUNT(sc.id) FILTER (WHERE a.status = 'A')::int AS alpa,
+                       ROUND(100.0 * COUNT(sc.id) FILTER (WHERE a.status = 'H')
+                           / NULLIF(COUNT(sc.id), 0), 1) AS persen_hadir
+                FROM enrollments e
+                JOIN programs p ON p.id = e.program_id
+                LEFT JOIN attendances a
+                    ON a.enrollment_id = e.id AND a.student_id = e.student_id
+                LEFT JOIN class_sessions cs
+                    ON cs.id = a.session_id AND cs.status = 'selesai'
+                   AND cs.tanggal >= e.created_at::date
+                LEFT JOIN schedules sc
+                    ON sc.id = cs.schedule_id AND sc.program_id = e.program_id
+                WHERE e.student_id = %s
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
                   AND NOT {AKSES_TERKUNCI_SQL}
                   AND (%s::integer IS NULL OR p.id = %s::integer)
+                GROUP BY e.id, p.id, p.nama
                 ORDER BY p.nama;
                 """,
                 (student_id, program_id, program_id),
@@ -152,7 +188,7 @@ def rekap_absensi(student_id: int, program_id: int | None = None) -> list[dict]:
 
 
 def daftar_absensi(student_id: int, program_id: int | None = None, limit: int = 300) -> list[dict]:
-    """Riwayat presensi terperinci milik siswa yang sedang login."""
+    """Riwayat per enrollment; sesi dalam proses dilabeli belum final, batal dikecualikan."""
     _valid_id(student_id, "ID siswa")
     if program_id is not None:
         _valid_id(program_id, "ID program")
@@ -163,16 +199,19 @@ def daftar_absensi(student_id: int, program_id: int | None = None, limit: int = 
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 f"""
-                SELECT cs.tanggal, cs.pertemuan_ke, cs.topik,
+                SELECT e.id AS enrollment_id, cs.tanggal, cs.pertemuan_ke, cs.topik,
+                       cs.status::text AS status_pertemuan,
                        p.id AS program_id, p.nama AS nama_program,
                        a.status::text AS status_absensi, a.keterangan
-                FROM attendances a
-                JOIN class_sessions cs ON cs.id = a.session_id
-                JOIN schedules sc ON sc.id = cs.schedule_id
-                JOIN programs p ON p.id = sc.program_id
-                JOIN enrollments e ON e.student_id = a.student_id AND e.program_id = p.id
-                WHERE a.student_id = %s
+                FROM enrollments e
+                JOIN attendances a ON a.enrollment_id = e.id AND a.student_id = e.student_id
+                JOIN class_sessions cs ON cs.id = a.session_id AND cs.status <> 'batal'
+                JOIN schedules sc ON sc.id = cs.schedule_id AND sc.program_id = e.program_id
+                JOIN programs p ON p.id = e.program_id
+                WHERE e.student_id = %s
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
                   AND NOT {AKSES_TERKUNCI_SQL}
+                  AND cs.tanggal >= e.created_at::date
                   AND (%s::integer IS NULL OR p.id = %s::integer)
                 ORDER BY cs.tanggal DESC, cs.pertemuan_ke DESC
                 LIMIT %s;
@@ -200,6 +239,7 @@ def ringkasan_nilai(student_id: int, program_id: int | None = None) -> list[dict
                 JOIN programs p ON p.id = e.program_id
                 LEFT JOIN v_nilai_akhir v ON v.enrollment_id = e.id
                 WHERE e.student_id = %s
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
                   AND NOT {AKSES_TERKUNCI_SQL}
                   AND (%s::integer IS NULL OR p.id = %s::integer)
                 ORDER BY p.nama;
@@ -228,6 +268,7 @@ def daftar_nilai(student_id: int, program_id: int, limit: int = 500) -> list[dic
                 JOIN programs p ON p.id = e.program_id
                 LEFT JOIN users tu ON tu.id = g.input_by
                 WHERE e.student_id = %s
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
                   AND NOT {AKSES_TERKUNCI_SQL}
                   AND e.program_id = %s
                 ORDER BY g.jenis, g.tanggal DESC, g.id DESC
@@ -259,8 +300,10 @@ def daftar_catatan_materi(student_id: int, program_id: int, limit: int = 300) ->
                 JOIN tutors t ON t.user_id = sc.tutor_id
                 JOIN users tu ON tu.id = t.user_id
                 WHERE p.id = %s
+                  AND {ENROLLMENT_TERAKHIR_TERSEDIA_SQL}
                   AND NOT {AKSES_TERKUNCI_SQL}
-                  AND cs.status = 'terlaksana'
+                  AND cs.tanggal >= e.created_at::date
+                  AND cs.status IN ('terlaksana', 'selesai')
                   AND (NULLIF(BTRIM(cs.topik), '') IS NOT NULL
                        OR NULLIF(BTRIM(cs.ringkasan), '') IS NOT NULL)
                 ORDER BY cs.tanggal DESC, cs.pertemuan_ke DESC

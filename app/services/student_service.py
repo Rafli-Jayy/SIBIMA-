@@ -48,6 +48,13 @@ def jadwal_saya(hari: str | None = None, program_id: int | None = None):
     return _read("Jadwal", student_repo.daftar_jadwal, hari, program_id)
 
 
+def pertemuan_saya(program_id: int):
+    """Riwayat sesi dibatasi oleh role siswa, enrollment aktif, dan H+3."""
+    if type(program_id) is not int or program_id <= 0:
+        return False, "ID program tidak valid."
+    return _read("Riwayat pertemuan", student_repo.daftar_pertemuan_siswa, program_id)
+
+
 def rekap_absensi(program_id: int | None = None):
     if program_id is not None and (type(program_id) is not int or program_id <= 0):
         return False, "ID program tidak valid."

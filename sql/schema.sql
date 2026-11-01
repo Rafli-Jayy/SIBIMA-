@@ -33,7 +33,7 @@ CREATE TYPE enrollment_status AS ENUM ('menunggu_pembayaran', 'menunggu', 'aktif
 CREATE TYPE invoice_status    AS ENUM ('belum_dibayar', 'lunas', 'batal');
 CREATE TYPE payment_status    AS ENUM ('menunggu_pembayaran', 'menunggu_konfirmasi',
                                        'lunas', 'ditolak', 'gagal', 'direfund');
-CREATE TYPE session_status    AS ENUM ('terlaksana', 'batal');
+CREATE TYPE session_status    AS ENUM ('terlaksana', 'batal', 'perlu_laporan', 'selesai'); -- terlaksana = legacy
 CREATE TYPE attendance_status AS ENUM ('H', 'I', 'S', 'A');   -- Hadir, Izin, Sakit, Alpa
 CREATE TYPE grade_type        AS ENUM ('tugas', 'kuis', 'uts', 'uas');
 
@@ -197,9 +197,12 @@ CREATE TABLE enrollments (
     alasan_tolak  TEXT,
     processed_by  INT REFERENCES users(id),
     processed_at  TIMESTAMPTZ,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_enrollment UNIQUE (student_id, program_id)
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Satu pendaftaran berjalan per siswa/program; riwayat batal/ditolak/selesai
+-- dapat memiliki beberapa enrollment agar pendaftaran ulang tidak menghapus data.
+CREATE UNIQUE INDEX uq_enrollment_berjalan ON enrollments (student_id, program_id)
+WHERE status IN ('menunggu_pembayaran', 'menunggu', 'aktif');
 CREATE INDEX idx_enroll_program ON enrollments (program_id, status);
 
 
@@ -282,7 +285,9 @@ CREATE TABLE class_sessions (
     pertemuan_ke SMALLINT       NOT NULL CHECK (pertemuan_ke > 0),
     topik        VARCHAR(150),
     ringkasan    TEXT,                                -- catatan materi untuk siswa
-    status       session_status NOT NULL DEFAULT 'terlaksana',
+    status       session_status NOT NULL DEFAULT 'perlu_laporan',
+    alasan_batal VARCHAR(500),
+    selesai_at   TIMESTAMPTZ,
     created_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
     CONSTRAINT uq_session_tanggal UNIQUE (schedule_id, tanggal),
     CONSTRAINT uq_session_ke      UNIQUE (schedule_id, pertemuan_ke)
@@ -291,12 +296,15 @@ CREATE TABLE class_sessions (
 CREATE TABLE attendances (
     session_id INT               NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
     student_id INT               NOT NULL REFERENCES students(user_id),
+    -- NULL diperbolehkan hanya untuk data lama yang belum diaudit manual.
+    enrollment_id INT            CONSTRAINT fk_attendances_enrollment REFERENCES enrollments(id),
     status     attendance_status NOT NULL,
     keterangan VARCHAR(200),
     dicatat_at TIMESTAMPTZ       NOT NULL DEFAULT now(),
     PRIMARY KEY (session_id, student_id)
 );
 CREATE INDEX idx_attend_student ON attendances (student_id);
+CREATE INDEX idx_attend_enrollment ON attendances (enrollment_id) WHERE enrollment_id IS NOT NULL;
 
 CREATE TABLE grades (
     id            INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -388,19 +396,29 @@ FROM payments
 WHERE status = 'lunas'
 GROUP BY 1;
 
--- Rekap kehadiran siswa per program
+-- Rekap kehadiran per enrollment; hanya absensi sesi selesai.
+-- Kolom awal dari view lama dipertahankan urutan dan tipe untuk kompatibilitas.
 CREATE VIEW v_rekap_kehadiran AS
-SELECT a.student_id, s.program_id,
-       COUNT(*)                                       AS total_pertemuan,
-       COUNT(*) FILTER (WHERE a.status = 'H')         AS hadir,
-       COUNT(*) FILTER (WHERE a.status = 'I')         AS izin,
-       COUNT(*) FILTER (WHERE a.status = 'S')         AS sakit,
-       COUNT(*) FILTER (WHERE a.status = 'A')         AS alpa,
-       ROUND(100.0 * COUNT(*) FILTER (WHERE a.status = 'H') / COUNT(*), 1) AS persen_hadir
-FROM attendances a
-JOIN class_sessions cs ON cs.id = a.session_id
-JOIN schedules s       ON s.id = cs.schedule_id
-GROUP BY a.student_id, s.program_id;
+SELECT e.student_id, e.program_id,
+       r.total_pertemuan, r.hadir, r.izin, r.sakit, r.alpa, r.persen_hadir,
+       e.id AS enrollment_id,
+       e.status::text AS status_enrollment,
+       e.created_at::date AS tanggal_pendaftaran
+FROM enrollments e
+CROSS JOIN LATERAL (
+    SELECT COUNT(*) AS total_pertemuan,
+           COUNT(*) FILTER (WHERE a.status = 'H') AS hadir,
+           COUNT(*) FILTER (WHERE a.status = 'I') AS izin,
+           COUNT(*) FILTER (WHERE a.status = 'S') AS sakit,
+           COUNT(*) FILTER (WHERE a.status = 'A') AS alpa,
+           ROUND(100.0 * COUNT(*) FILTER (WHERE a.status = 'H')
+                 / NULLIF(COUNT(*), 0), 1) AS persen_hadir
+    FROM attendances a
+    JOIN class_sessions cs ON cs.id = a.session_id AND cs.status = 'selesai'
+    JOIN schedules s ON s.id = cs.schedule_id AND s.program_id = e.program_id
+    WHERE a.enrollment_id = e.id AND a.student_id = e.student_id
+) r
+WHERE e.status IN ('aktif', 'selesai', 'batal');
 
 -- Nilai akhir berbobot. Komponen yang belum ada nilainya tidak dihitung
 -- (hasilnya menjadi "nilai sementara" sampai UTS/UAS terisi).

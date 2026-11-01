@@ -10,9 +10,12 @@ from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.markup import escape
+from app.ui.jadwal_context import jadwal_rutin_terdekat, jam_jadwal, label_hari
+from app.ui.proyeksi_pertemuan import proyeksi_jadwal, CATATAN_PROYEKSI
 
 from app.services import academic_service, tutor_service
-from app.ui.console import console, bersihkan_layar, gagal, sukses, peringatan
+from app.ui.console import console, bersihkan_layar, gagal, sukses, peringatan, info
 
 _GAYA = Style([
     ("qmark", "fg:#00ffff bold"),
@@ -219,14 +222,14 @@ def _pilih_siswa(program_id):
     return _pilih("Pilih siswa:", [Choice(f"{r.get('nis') or 'Tanpa NIS'} | {r['nama_lengkap']}", value=r["student_id"]) for r in data])
 
 
-def _pilih_pertemuan(program_id=None):
+def _pilih_pertemuan(program_id=None, *, dengan_detail=False):
     ok, data = _run_service(academic_service.daftar_pertemuan, program_id)
     if not ok:
         _pause()
         return None
     if not data:
         _layar("DAFTAR PERTEMUAN", "Sesi kelas yang tersedia")
-        peringatan("Belum ada pertemuan. Buka pertemuan baru melalui menu Absensi.")
+        peringatan("Belum ada laporan pertemuan. Gunakan Kelola Pertemuan pada hari yang dijadwalkan.")
         _pause()
         return None
     choices = [Choice(
@@ -235,7 +238,141 @@ def _pilih_pertemuan(program_id=None):
         f"{r['jumlah_absen']} absensi | {r['status_pertemuan']}",
         value=r["session_id"],
     ) for r in data]
-    return _pilih("Pilih pertemuan:", choices)
+    chosen = _pilih("Pilih pertemuan:", choices)
+    if chosen is None:
+        return None
+    if dengan_detail:
+        return next((s for s in data if s["session_id"] == chosen), None)
+    return chosen
+
+
+def _detail_jadwal_tutor(item):
+    """Halaman konteks jadwal; sesi hanya dilaporkan jika ada catatan nyata."""
+    while True:
+        ok, payload = academic_service.pertemuan_per_jadwal(item["id"])
+        if not ok:
+            _layar("DETAIL JADWAL", str(item.get("nama_program") or "—"))
+            gagal(str(payload)); _pause(); return
+        sessions = payload
+        _layar("DETAIL JADWAL TUTOR", f"{item.get('kode_program') or '—'} • {item.get('nama_program') or '—'}")
+        message = (
+            f"[bold]Program[/bold]       : {escape(str(item.get('nama_program') or '—'))}\n"
+            f"[bold]Jenjang[/bold]       : {escape(str(item.get('jenjang') or '—'))}\n"
+            f"[bold]Jadwal rutin[/bold]  : {escape(label_hari(item.get('hari')))} • {escape(jam_jadwal(item))}\n"
+            f"[bold]Ruangan[/bold]       : {escape(str(item.get('nama_ruang') or '—'))}\n"
+            f"[bold]Status jadwal[/bold] : {'Aktif' if item.get('aktif') else 'Nonaktif'}\n"
+            f"[bold]Peserta program[/bold]: {item.get('jumlah_siswa') or 0} enrollment aktif (bukan per sesi)"
+        )
+        console.print(Panel(message, title="INFORMASI KELAS & JADWAL", border_style="cyan", expand=True))
+        if item.get("aktif"):
+            rencana = proyeksi_jadwal(item, sessions)
+            if rencana is not None:
+                sebelumnya, berikutnya = rencana["sebelumnya"], rencana["berikutnya"]
+                konten = (
+                    f"[bold]Jadwal sebelumnya (perkiraan)[/bold]: {_teks_nilai(sebelumnya['tanggal'])}\n"
+                    f"  {escape(sebelumnya['status'])}\n"
+                    f"[bold]Jadwal berikutnya (perkiraan)[/bold]: {_teks_nilai(berikutnya['tanggal'])}\n"
+                    f"  {escape(berikutnya['status'])}\n"
+                    "[dim]Nomor pertemuan hanya ada setelah tutor mencatat sesi.[/dim]"
+                )
+                console.print(Panel(konten, title="RENCANA PERTEMUAN", border_style="bright_blue", expand=True))
+                info(CATATAN_PROYEKSI)
+        if not sessions:
+            console.print(Panel(
+                "Belum ada laporan pertemuan tercatat untuk jadwal ini. "
+                "Jadwal rutin tidak membuktikan pembelajaran telah berlangsung.",
+                title="AKTIVITAS PEMBELAJARAN", border_style="yellow", expand=True))
+        else:
+            latest = sessions[0]
+            status = _label_pertemuan(latest.get("status_pertemuan"))
+            latest_txt = (
+                f"[bold]Pertemuan #{latest.get('pertemuan_ke') or '—'}[/bold] • "
+                f"{escape(_teks_nilai(latest.get('tanggal')))}\n"
+                f"[bold]Status[/bold]       : {status}\n"
+                f"[bold]Materi[/bold]       : {escape(str(latest.get('topik') or 'Belum dilaporkan'))}\n"
+                f"[bold]Absensi tercatat[/bold]: {latest.get('jumlah_absen') or 0} entri "
+                "(bukan jaminan lengkap)"
+            )
+            console.print(Panel(latest_txt, title="PERTEMUAN TERAKHIR TERCATAT", border_style="bright_blue", expand=True))
+        chosen = questionary.select("Pilih informasi yang ingin dilihat:", choices=[
+            Choice("Riwayat pertemuan yang tercatat", value="riwayat"),
+            Choice("Daftar siswa aktif program", value="siswa"),
+            Choice("Kembali ke jadwal", value="back"),
+        ], style=_GAYA, qmark="⚡", pointer="▶").ask()
+        if chosen in (None, "back"):
+            return
+        if chosen == "riwayat":
+            _layar("RIWAYAT PERTEMUAN", str(item.get("nama_program") or "—"))
+            if not sessions:
+                peringatan("Belum ada sesi tercatat pada jadwal ini.")
+            else:
+                tbl = Table(show_header=True, header_style="bold cyan", expand=True)
+                for col in ("Ke-", "Tanggal", "Materi", "Status catatan", "Absensi"):
+                    tbl.add_column(col, overflow="fold")
+                for s in sessions:
+                    tbl.add_row(str(s.get("pertemuan_ke") or "—"), _teks_nilai(s.get("tanggal")),
+                                str(s.get("topik") or "Belum dilaporkan"),
+                                _label_pertemuan(s.get("status_pertemuan")),
+                                str(s.get("jumlah_absen") or 0))
+                console.print(Panel(tbl, border_style="blue", expand=True))
+                info("Status 'tercatat' tidak berarti absensi lengkap atau kelas sudah ditutup tutor.")
+            _pause()
+        elif chosen == "siswa":
+            ok, students = _run_service(academic_service.daftar_siswa, item["program_id"])
+            if not ok:
+                _pause(); continue
+            _tabel(f"PESERTA PROGRAM {item.get('nama_program') or '—'}", students,
+                   [("nis", "NIS"), ("nama_lengkap", "Nama siswa")])
+            info("Peserta berasal dari program, bukan daftar rombongan per jadwal.")
+            _pause()
+
+
+def _jelajah_jadwal_tutor(rows, title, semua=None):
+    """Daftar jadwal -> detail tanpa kehilangan identitas program."""
+    page = 0
+    page_size = 8
+    while True:
+        _layar(title, "Pilih jadwal untuk melihat informasi lengkap kelas dan sesi.")
+        if not rows:
+            peringatan("Tidak ada jadwal mengajar hari ini." if "HARI INI" in title else
+                       "Belum ada jadwal mengajar aktif yang ditugaskan Admin.")
+            if semua:
+                next_slot = jadwal_rutin_terdekat(semua)
+                if next_slot:
+                    dt, nearest = next_slot
+                    info(f"Jadwal rutin terdekat (perkiraan): {nearest.get('nama_program') or '—'} "
+                         f"• {dt:%d-%m-%Y} • {jam_jadwal(nearest)}")
+            _pause(); return
+        page_rows = rows[page * page_size:(page + 1) * page_size]
+        tbl = Table(show_header=True, header_style="bold cyan", expand=True)
+        for col in ("Hari", "Waktu", "Program", "Ruang", "Peserta program"):
+            tbl.add_column(col, overflow="fold")
+        for r in page_rows:
+            tbl.add_row(label_hari(r.get("hari")), jam_jadwal(r),
+                        str(r.get("nama_program") or "—"), str(r.get("nama_ruang") or "—"),
+                        str(r.get("jumlah_siswa") or 0))
+        console.print(Panel(tbl, title="JADWAL RUTIN", border_style="blue", expand=True))
+        choices = [Choice(f"{r.get('nama_program') or '—'} • "
+                          f"{label_hari(r.get('hari'))} {jam_jadwal(r)} • "
+                          f"{r.get('nama_ruang') or '—'}", value=r["id"]) for r in page_rows]
+        if page > 0:
+            choices.append(Choice("← Halaman sebelumnya", value="__prev__"))
+        if (page + 1) * page_size < len(rows):
+            choices.append(Choice("Halaman berikutnya →", value="__next__"))
+        choices.append(Choice("Kembali", value="__back__"))
+        selected = questionary.select("Pilih jadwal untuk detail:", choices=choices,
+            style=_GAYA, qmark="⚡", pointer="▶").ask()
+        if selected in (None, "__back__"):
+            return
+        if selected == "__next__":
+            page += 1
+            continue
+        if selected == "__prev__":
+            page = max(0, page - 1)
+            continue
+        row = next((r for r in rows if r["id"] == selected), None)
+        if row is not None:
+            _detail_jadwal_tutor(row)
 
 
 def _jadwal_hari_ini():
@@ -243,25 +380,15 @@ def _jadwal_hari_ini():
     if data is None:
         return
     hari_ini = _HARI[date.today().weekday()]
-    rows = [row for row in data if row["hari"] == hari_ini]
-    _tabel("Jadwal Mengajar Hari Ini", rows, [
-        ("jam_mulai", "Mulai"), ("jam_selesai", "Selesai"),
-        ("kode_program", "Kode"), ("nama_program", "Program"),
-        ("nama_ruang", "Ruang"), ("jumlah_siswa", "Siswa"),
-    ])
-    _pause()
+    rows = [r for r in data if r.get("hari") == hari_ini]
+    _jelajah_jadwal_tutor(rows, "JADWAL MENGAJAR HARI INI", semua=data)
 
 
 def _jadwal_mingguan():
     data = _jadwal(aktif=True)
     if data is None:
         return
-    _tabel("Jadwal Mengajar Mingguan", data, [
-        ("hari", "Hari"), ("jam_mulai", "Mulai"), ("jam_selesai", "Selesai"),
-        ("kode_program", "Kode"), ("nama_program", "Program"),
-        ("nama_ruang", "Ruang"), ("jumlah_siswa", "Siswa"),
-    ])
-    _pause()
+    _jelajah_jadwal_tutor(data, "JADWAL MENGAJAR MINGGUAN", semua=data)
 
 
 def _kelas_dan_siswa():
@@ -281,7 +408,7 @@ def _kelas_dan_siswa():
             _pause(); continue
         if choice == "daftar":
             _tabel("Siswa Aktif di Kelas", data, [
-                ("nis", "NIS"), ("nama_lengkap", "Nama"), ("tugas", "Tugas"),
+                ("nis", "NIS"), ("nama_lengkap", "Nama"), ("enrollment_id", "Pendaftaran"), ("tugas", "Tugas"),
                 ("kuis", "Kuis"), ("uts", "UTS"), ("uas", "UAS"),
                 ("nilai_akhir", "Nilai Akhir"), ("total_absensi", "Absen Tercatat"),
                 ("persen_hadir", "% Hadir"),
@@ -301,6 +428,7 @@ def _kelas_dan_siswa():
                 f"Sekolah: {detail.get('sekolah') or '-'}\nJenjang: {detail.get('jenjang') or '-'}\n"
                 f"Nomor HP: {detail.get('no_hp') or '-'}\nNama wali: {detail.get('nama_wali') or '-'}\n"
                 f"Kelas: {detail['kode_program']} - {detail['nama_program']}\n"
+                f"ID pendaftaran: {detail.get('enrollment_id') or '—'}\n"
                 f"Nilai akhir: {_teks_nilai(detail.get('nilai_akhir'))}\n"
                 f"Kehadiran: {_teks_nilai(detail.get('persen_hadir'))}% "
                 f"(H {detail['hadir']}, I {detail['izin']}, S {detail['sakit']}, A {detail['alpa']})",
@@ -319,46 +447,232 @@ def _buka_pertemuan():
     _pause()
 
 
-def _isi_absensi(session_id):
+
+def _label_pertemuan(status):
+    return {
+        'batal': 'Dibatalkan', 'selesai': 'Selesai (dikonfirmasi)',
+        'perlu_laporan': 'Perlu absensi / laporan',
+        'terlaksana': 'Catatan lama (belum terverifikasi selesai)',
+    }.get(status, 'Status tidak diketahui')
+
+
+def _catatan_pada_pertemuan(pertemuan):
+    _layar('CATATAN MATERI', f"{pertemuan.get('nama_program') or '—'} • "
+           f"Pertemuan #{pertemuan.get('pertemuan_ke') or '—'}")
+    topik = questionary.text('Topik pembelajaran:',
+        default=pertemuan.get('topik') or '', style=_GAYA).ask()
+    if topik is None:
+        return
+    ringkasan = questionary.text('Ringkasan pembelajaran:',
+        default=pertemuan.get('ringkasan') or '', style=_GAYA).ask()
+    if ringkasan is None:
+        return
+    ok, message = _run_service(academic_service.simpan_catatan,
+                               pertemuan['session_id'], topik, ringkasan)
+    if ok:
+        _hasil(message, True, 'MATERI DISIMPAN')
+    _pause()
+
+
+def _kelola_detail_pertemuan(session_id):
+    """Selalu refresh status sebelum aksi; konfirmasi selesai di backend atomik."""
+    while True:
+        ok, info_sesi = _run_service(academic_service.ringkasan_pertemuan, session_id)
+        if not ok:
+            _pause(); return
+        status = info_sesi['status_pertemuan']
+        _layar('KELOLA PERTEMUAN',
+            f"{info_sesi.get('nama_program') or '—'} • #{info_sesi.get('pertemuan_ke') or '—'} • "
+            f"{_teks_nilai(info_sesi.get('tanggal'))}")
+        contents = (
+            f"[bold]Program[/bold]      : {escape(str(info_sesi.get('nama_program') or '—'))} "
+            f"({escape(str(info_sesi.get('kode_program') or '—'))})\n"
+            f"[bold]Pertemuan[/bold]    : #{info_sesi.get('pertemuan_ke') or '—'}\n"
+            f"[bold]Tanggal[/bold]      : {escape(_teks_nilai(info_sesi.get('tanggal')))}\n"
+            f"[bold]Waktu / Ruang[/bold]: {escape(jam_jadwal(info_sesi))} / "
+            f"{escape(str(info_sesi.get('nama_ruang') or '—'))}\n"
+            f"[bold]Status[/bold]       : {escape(_label_pertemuan(status))}\n"
+            f"[bold]Materi[/bold]       : {escape(str(info_sesi.get('topik') or 'Belum dilaporkan'))}\n"
+            f"[bold]Absensi[/bold]      : {info_sesi.get('jumlah_absen') or 0} tercatat "
+            '(kelengkapan dicek saat menyelesaikan)'
+        )
+        if status == 'batal':
+            contents += '\n[bold]Alasan batal[/bold] : ' + escape(str(info_sesi.get('alasan_batal') or 'Arsip lama (tidak tercatat)'))
+        console.print(Panel(contents, title='INFORMASI PERTEMUAN', border_style='cyan', expand=True))
+        choices = []
+        if status not in ('batal', 'selesai'):
+            choices.extend([
+                Choice('Isi / Koreksi Absensi Siswa', value='absensi'),
+                Choice('Isi Materi & Catatan', value='materi'),
+                Choice('Konfirmasi pertemuan selesai', value='selesai'),
+                Choice('Laporkan pertemuan dibatalkan', value='batal'),
+            ])
+        choices.append(Choice('Kembali', value='back'))
+        action = questionary.select('Tindakan untuk pertemuan ini:',
+            choices=choices, style=_GAYA, qmark='⚡', pointer='▶').ask()
+        if action in (None, 'back'):
+            return
+        if action == 'absensi':
+            _isi_absensi(session_id, pertemuan=info_sesi)
+        elif action == 'materi':
+            _catatan_pada_pertemuan(info_sesi)
+        elif action == 'selesai':
+            if _konfirmasi('Semua peserta sudah diabsen? Selesaikan pertemuan ini?',
+                          default=False, bagian='KONFIRMASI PENYELESAIAN'):
+                ok, result = _run_service(academic_service.selesaikan_pertemuan, session_id)
+                if ok:
+                    _hasil(result, True, 'PERTEMUAN SELESAI')
+                _pause()
+        elif action == 'batal':
+            alasan = _form_teks('Alasan pertemuan tidak berlangsung (wajib):',
+                                bagian='PEMBATALAN PERTEMUAN')
+            if alasan is None or not alasan.strip():
+                continue
+            if _konfirmasi('Batalkan pertemuan ini? Absensi belum boleh tercatat.',
+                          default=False, bagian='KONFIRMASI PEMBATALAN'):
+                ok, result = _run_service(academic_service.batalkan_pertemuan, session_id, alasan)
+                if ok:
+                    _hasil(result, True, 'PERTEMUAN DIBATALKAN')
+                _pause()
+
+
+def _kelola_pertemuan_hari_ini():
+    """Tidak membuat jadwal baru: hanya menyiapkan catatan pada tanggal jadwal."""
+    schedule_id = _pilih_jadwal(aktif=True)
+    if schedule_id is None:
+        return
+    _layar('KELOLA PERTEMUAN', 'SIBIMA memakai jadwal rutin Admin; satu catatan per tanggal')
+    ok, result = _run_service(academic_service.siapkan_pertemuan, schedule_id)
+    if not ok:
+        _pause(); return
+    _kelola_detail_pertemuan(result['session_id'])
+
+def _peserta_absensi_unik(roster):
+    """Satu prompt per siswa, meskipun join enrollment lama menghasilkan duplikat."""
+    result = []
+    seen = set()
+    for student in roster:
+        student_id = student.get("student_id")
+        if student_id is None or student_id in seen:
+            continue
+        seen.add(student_id)
+        result.append(student)
+    return result
+
+
+def _layar_absensi_siswa(pertemuan, student, index, total, *, pilihan_status=None):
+    """Konteks peserta & pertemuan tetap terlihat tepat di atas input Questionary."""
+    name = str(student.get("nama_lengkap") or "Nama belum tersedia")
+    nis = str(student.get("nis") or "Belum ada")
+    program = str(pertemuan.get("nama_program") or "Program tidak tersedia")
+    kode = str(pertemuan.get("kode_program") or "—")
+    nomor = str(pertemuan.get("pertemuan_ke") or "—")
+    tanggal = _teks_nilai(pertemuan.get("tanggal"))
+    _layar("ABSENSI • SISWA", f"Pertemuan #{nomor} • {program} • {tanggal}")
+    status_lama = student.get("status_absensi")
+    status_text = _LABEL_ABSEN.get(status_lama, "Belum dicatat")
+    lines = (
+        f"[bold cyan]SISWA {index} DARI {total}[/bold cyan]\n"
+        f"[bold]Nama[/bold]               : {escape(name)}\n"
+        f"[bold]NIS[/bold]                : {escape(nis)}\n"
+        f"[bold]Program[/bold]            : {escape(program)} ({escape(kode)})\n"
+        f"[bold]Pertemuan[/bold]         : #{escape(nomor)} • {escape(tanggal)}\n"
+        f"[bold]Waktu / Ruang[/bold]     : {escape(jam_jadwal(pertemuan))} / "
+        f"{escape(str(pertemuan.get('nama_ruang') or '—'))}\n"
+        f"[bold]Absensi sebelumnya[/bold] : {escape(status_text)}"
+    )
+    if pilihan_status is not None:
+        lines += f"\n[bold green]Status dipilih[/bold green]      : {escape(_LABEL_ABSEN[pilihan_status])}"
+    console.print(Panel(lines, title="IDENTITAS SISWA & PERTEMUAN", border_style="cyan", expand=True))
+
+
+def _isi_absensi(session_id, *, pertemuan=None):
+    # Identitas pertemuan diambil dari service yang memeriksa kepemilikan tutor.
+    if pertemuan is None:
+        ok, sessions = _run_service(academic_service.daftar_pertemuan)
+        if not ok:
+            _pause(); return
+        pertemuan = next((s for s in sessions if s.get("session_id") == session_id), None)
+    if pertemuan is None or pertemuan.get("session_id") != session_id:
+        _layar("ABSENSI TUTOR", "Verifikasi identitas pertemuan")
+        peringatan("Identitas pertemuan tidak tersedia. Absensi dibatalkan agar tidak salah kelas.")
+        _pause(); return
+    if pertemuan.get("status_pertemuan") in ("batal", "selesai"):
+        _layar("ABSENSI TUTOR", "Pertemuan sudah ditutup")
+        peringatan("Absensi tidak bisa diubah pada pertemuan yang sudah selesai atau dibatalkan.")
+        _pause(); return
+
     ok, roster = _run_service(academic_service.daftar_absensi, session_id)
     if not ok:
         _pause(); return
-    if not roster:
-        peringatan("Tidak ada siswa aktif di program pada pertemuan ini.")
+    students = _peserta_absensi_unik(roster)
+    if not students:
+        _layar("ABSENSI TUTOR", str(pertemuan.get("nama_program") or "—"))
+        peringatan("Belum ada siswa yang dapat diabsen untuk pertemuan ini.")
         _pause(); return
+
     records = []
-    for index, student in enumerate(roster, start=1):
-        title = f"{student.get('nis') or 'Tanpa NIS'} | {student['nama_lengkap']}"
+    preview = []
+    total = len(students)
+    for index, student in enumerate(students, start=1):
+        nama = str(student.get("nama_lengkap") or "Nama belum tersedia")
+        _layar_absensi_siswa(pertemuan, student, index, total)
         initial = student.get("status_absensi")
-        status = _pilih(
-            f"Absensi siswa {index}/{len(roster)}: {title}",
-            [Choice(f"{code} - {label}" + (" (sebelumnya)" if code == initial else ""), value=code) for code, label in _LABEL_ABSEN.items()]
-            + [Choice("Batal dan kembali (tidak menyimpan perubahan)", value="__back__")],
-        )
-        if status in (None, "__back__"):
-            peringatan("Pengisian dibatalkan; perubahan belum disimpan.")
+        choices = [Choice(
+            f"{label}" + (" (status sebelumnya)" if code == initial else ""),
+            value=code,
+        ) for code, label in _LABEL_ABSEN.items()]
+        choices.append(Choice("Batalkan seluruh pengisian (belum disimpan)", value="__back__"))
+        # Nama siswa ada pada panel dan di pertanyaan, bukan hanya subtitle yang bisa terhapus.
+        status = questionary.select(
+            f"Status kehadiran untuk {nama}:", choices=choices,
+            style=_GAYA, qmark="⚡", pointer="▶",
+            instruction=" (↑/↓ pilih status • Enter lanjut • Ctrl+C batal)",
+        ).ask()
+        if status not in _LABEL_ABSEN:
+            peringatan("Pengisian dibatalkan; tidak ada absensi yang disimpan.")
             _pause(); return
-        keterangan = _form_teks(
-            f"Keterangan (opsional) — {student['nama_lengkap']}",
-            default=student.get("keterangan") or "", bagian="ABSENSI • KETERANGAN",
-        )
+
+        _layar_absensi_siswa(pertemuan, student, index, total, pilihan_status=status)
+        keterangan = questionary.text(
+            f"Keterangan untuk {nama} (opsional):",
+            default=student.get("keterangan") or "", style=_GAYA,
+        ).ask()
         if keterangan is None:
-            peringatan("Pengisian dibatalkan; perubahan belum disimpan.")
+            peringatan("Pengisian dibatalkan; tidak ada absensi yang disimpan.")
             _pause(); return
         records.append({"student_id": student["student_id"], "status": status, "keterangan": keterangan})
-    if _konfirmasi("Simpan seluruh absensi ini?", default=True, bagian="SIMPAN ABSENSI"):
+        preview.append({"nis": student.get("nis") or "—", "nama": nama,
+                        "status": _LABEL_ABSEN[status], "keterangan": keterangan})
+
+    _layar("KONFIRMASI ABSENSI", f"{pertemuan.get('nama_program') or '—'} • "
+           f"Pertemuan #{pertemuan.get('pertemuan_ke') or '—'} • "
+           f"{_teks_nilai(pertemuan.get('tanggal'))}")
+    table = Table(show_header=True, header_style="bold cyan", expand=True)
+    for heading in ("NIS", "Nama siswa", "Status", "Keterangan"):
+        table.add_column(heading, overflow="fold")
+    for row in preview:
+        table.add_row(*(Text(str(row[key]), overflow="fold") for key in
+                        ("nis", "nama", "status", "keterangan")))
+    console.print(Panel(table, title=f"RINGKASAN ABSENSI • {total} SISWA", border_style="cyan", expand=True))
+    decision = questionary.confirm(
+        f"Simpan absensi {total} siswa untuk pertemuan #{pertemuan.get('pertemuan_ke') or '—'}?",
+        default=False, style=_GAYA,
+    ).ask()
+    if decision:
         ok, message = _run_service(academic_service.simpan_absensi, session_id, records)
         if ok:
             _hasil(message, True, "ABSENSI TERSIMPAN")
     else:
-        peringatan("Perubahan absensi dibatalkan.")
+        peringatan("Perubahan absensi dibatalkan; tidak ada data yang disimpan.")
     _pause()
 
 
 def _absensi():
     while True:
         choice = _pilih("Absensi", [
-            Choice("Buka pertemuan baru (nomor otomatis)", value="baru"),
+            Choice("Kelola pertemuan hari ini (sesuai jadwal)", value="baru"),
+            Choice("Kelola pertemuan yang sudah tercatat", value="kelola"),
             Choice("Isi / ubah absensi pertemuan", value="isi"),
             Choice("Rekap absensi per siswa", value="rekap"),
             Choice("Kembali", value="back"),
@@ -366,11 +680,15 @@ def _absensi():
         if choice in (None, "back"):
             return
         if choice == "baru":
-            _buka_pertemuan()
+            _kelola_pertemuan_hari_ini()
+        elif choice == "kelola":
+            selected = _pilih_pertemuan(dengan_detail=True)
+            if selected:
+                _kelola_detail_pertemuan(selected["session_id"])
         elif choice == "isi":
-            session_id = _pilih_pertemuan()
-            if session_id is not None:
-                _isi_absensi(session_id)
+            pertemuan = _pilih_pertemuan(dengan_detail=True)
+            if pertemuan is not None:
+                _isi_absensi(pertemuan["session_id"], pertemuan=pertemuan)
         elif choice == "rekap":
             program_id = _pilih_program()
             if program_id is None:
@@ -378,8 +696,8 @@ def _absensi():
             ok, rows = _run_service(academic_service.rekap_absensi, program_id)
             if ok:
                 _tabel("Rekap Absensi Siswa", rows, [
-                    ("nis", "NIS"), ("nama_lengkap", "Nama"), ("total_pertemuan", "Pertemuan"),
-                    ("hadir", "Hadir"), ("izin", "Izin"), ("sakit", "Sakit"),
+                    ("nis", "NIS"), ("nama_lengkap", "Nama"), ("enrollment_id", "Pendaftaran"),
+                    ("total_pertemuan", "Sesi selesai"), ("hadir", "Hadir"), ("izin", "Izin"), ("sakit", "Sakit"),
                     ("alpa", "Alpa"), ("persen_hadir", "% Hadir"),
                 ])
             _pause()
@@ -402,7 +720,7 @@ def _nilai():
             ok, rows = _run_service(academic_service.nilai_kelas, program_id)
             if ok:
                 _tabel("Nilai Kelas (nilai akhir berbobot)", rows, [
-                    ("nis", "NIS"), ("nama_lengkap", "Nama"), ("tugas", "Tugas"),
+                    ("nis", "NIS"), ("nama_lengkap", "Nama"), ("enrollment_id", "Pendaftaran"), ("tugas", "Tugas"),
                     ("kuis", "Kuis"), ("uts", "UTS"), ("uas", "UAS"),
                     ("nilai_akhir", "Nilai Akhir"),
                 ])
@@ -473,7 +791,7 @@ def _materi():
         if not ok:
             _pause(); continue
         if not sessions:
-            peringatan("Belum ada pertemuan. Buat pertemuan baru lewat menu Absensi dahulu.")
+            peringatan("Belum ada laporan pertemuan. Kelola pertemuan hari ini lewat menu Absensi dahulu.")
             _pause(); continue
         if choice == "tulis":
             session_id = _pilih("Pilih pertemuan untuk catatan:", [Choice(

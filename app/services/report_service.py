@@ -33,15 +33,28 @@ LAPORAN = {
         "ambil": report_repo.siswa_per_program,
     },
     "kehadiran": {
-        "judul": "Rekap Kehadiran",
+        "judul": "Rekap Kehadiran per Pendaftaran",
         "kolom": [
             ("kode_program", "Kode program"), ("nama_program", "Nama program"),
             ("nis", "NIS"), ("nama_siswa", "Nama siswa"),
+            ("enrollment_id", "ID pendaftaran"), ("status_enrollment", "Status pendaftaran"),
+            ("tanggal_pendaftaran", "Tanggal daftar"),
             ("total_pertemuan", "Total pertemuan"), ("hadir", "Hadir"),
             ("izin", "Izin"), ("sakit", "Sakit"), ("alpa", "Alpa"),
             ("persen_hadir", "Kehadiran (%)"),
         ],
         "ambil": report_repo.rekap_kehadiran,
+    },
+    "absensi_arsip": {
+        "judul": "Absensi Lama Belum Terhubung (Perlu Tinjauan)",
+        "kolom": [
+            ("kode_program", "Kode program"), ("nama_program", "Nama program"),
+            ("nis", "NIS"), ("nama_siswa", "Nama siswa"),
+            ("tanggal", "Tanggal sesi"), ("pertemuan_ke", "Pertemuan ke-"),
+            ("status_pertemuan", "Status sesi"), ("status_absensi", "Absensi"),
+            ("keterangan", "Keterangan"),
+        ],
+        "ambil": report_repo.absensi_belum_terhubung,
     },
     "nilai": {
         "judul": "Rata-rata Nilai per Program",
@@ -212,7 +225,7 @@ def ekspor_excel(kode: str) -> Path:
                 cell.number_format = '0.0"%"'
             elif key == "rata_nilai_akhir":
                 cell.number_format = "0.00"
-            elif key in {"jumlah_transaksi", "kuota", "siswa_aktif", "menunggu", "kuota_tersisa", "total_pertemuan", "hadir", "izin", "sakit", "alpa", "siswa_dinilai"}:
+            elif key in {"jumlah_transaksi", "kuota", "siswa_aktif", "menunggu", "kuota_tersisa", "total_pertemuan", "hadir", "izin", "sakit", "alpa", "siswa_dinilai", "enrollment_id", "pertemuan_ke"}:
                 cell.number_format = "#,##0"
         sheet.row_dimensions[row_index].height = 22
 

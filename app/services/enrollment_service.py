@@ -88,12 +88,8 @@ def daftar_program(student_id: int, program_id: int):
                 pesan = "Pembayaran sudah tercatat atau program gratis; pendaftaran menunggu keputusan admin."
             elif status_lama == "aktif":
                 pesan = "Kamu sudah terdaftar aktif pada program ini."
-            elif status_lama == "batal":
-                pesan = "Pendaftaran sebelumnya dibatalkan; program yang sama belum dapat didaftarkan ulang."
-            elif status_lama == "ditolak":
-                pesan = "Pendaftaran sebelumnya ditolak; program yang sama belum dapat didaftarkan ulang."
             else:
-                pesan = "Kamu sudah memiliki riwayat pendaftaran untuk program ini."
+                pesan = "Pendaftaran program ini masih berjalan. Periksa menu Kelas & Status Pendaftaran."
             return False, pesan
 
         return False, pesan_gagal.get(alasan, "Pendaftaran gagal diproses.")

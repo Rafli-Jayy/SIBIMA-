@@ -199,19 +199,37 @@ def setujui_enrollment(enrollment_id: int):
         return False, f"Persetujuan pendaftaran gagal ({type(exc).__name__}): {exc}"
     if not hasil.get("berhasil"):
         return False, hasil.get("pesan", "Pendaftaran tidak dapat disetujui.")
-    siswa = user_repo.cari_by_id(hasil["student_id"])
-    if not siswa:
-        return True, f"Pendaftaran {hasil['nama_program']} aktif, tetapi data email siswa tidak ditemukan."
-    detail = f"Program: {hasil['nama_program']}\nStatus: Aktif"
-    try:
-        terkirim = email_service.kirim_notifikasi_status(
-            email=siswa["email"], nama=siswa["nama_lengkap"], kategori="pendaftaran",
-            status="aktif", detail=detail,
-        )
-    except Exception:
-        terkirim = False
+    # Seluruh proses berikut berjalan SETELAH commit persetujuan pada repository.
+    # Kegagalan PDF, query detail, atau SMTP tidak boleh membatalkan aktivasi.
     pesan = f"Pendaftaran {hasil['nama_program']} diterima dan siswa sekarang aktif."
-    return True, pesan + (" Email konfirmasi dikirim." if terkirim else " Email konfirmasi gagal dikirim; status tetap aktif.")
+    try:
+        siswa = user_repo.cari_by_id(hasil["student_id"])
+        if not siswa:
+            return True, pesan + " Data email siswa tidak ditemukan; PDF/email belum dikirim."
+        detail = enrollment_repo.detail_admin(enrollment_id)
+        if not detail or detail.get("status") != "aktif":
+            return True, pesan + " Detail aktivasi tidak tersedia; PDF/email belum dikirim."
+        from app.services import activation_confirmation_service
+        data = {
+            "enrollment_id": enrollment_id,
+            "status": detail.get("status"),
+            "nama_siswa": siswa.get("nama_lengkap"),
+            "email_siswa": siswa.get("email"),
+            "nis": detail.get("nis"),
+            "nama_program": hasil["nama_program"],
+            "processed_at": detail.get("processed_at"),
+        }
+        pdf = activation_confirmation_service.buat_pdf_konfirmasi_aktivasi(data)
+        terkirim, info = activation_confirmation_service.kirim_pdf_konfirmasi_aktivasi(data, pdf)
+        if terkirim:
+            return True, pesan + " Email dan PDF konfirmasi aktivasi dikirim."
+        return True, pesan + f" PDF tersimpan di {pdf}, tetapi {info}"
+    except Exception as exc:
+        # Persetujuan sudah commit; hindari menyatakan gagal atau mencoba rollback.
+        return True, pesan + (
+            f" Dokumen/email konfirmasi belum berhasil ({type(exc).__name__}); "
+            "status kelas tetap aktif."
+        )
 
 
 def tolak_enrollment(enrollment_id: int, alasan: str):

@@ -85,8 +85,8 @@ def daftar_siswa_kelas(tutor_id: int, program_id: int):
                          / NULLIF(COUNT(DISTINCT a.session_id) FILTER (WHERE a.status IS NOT NULL), 0), 1) AS persen_hadir
                 FROM schedules sch
                 JOIN class_sessions cs ON cs.schedule_id = sch.id
-                JOIN attendances a ON a.session_id = cs.id AND a.student_id = e.student_id
-                WHERE sch.tutor_id = %s AND sch.program_id = e.program_id
+                JOIN attendances a ON a.session_id = cs.id AND a.enrollment_id = e.id AND a.student_id = e.student_id
+                WHERE sch.tutor_id = %s AND sch.program_id = e.program_id AND cs.status = 'selesai'
             ) a ON TRUE
             WHERE e.program_id = %s AND e.status = 'aktif'
               AND EXISTS (SELECT 1 FROM schedules sx WHERE sx.tutor_id = %s AND sx.program_id = e.program_id)
@@ -130,8 +130,8 @@ def detail_siswa_kelas(tutor_id: int, program_id: int, student_id: int):
                          / NULLIF(COUNT(DISTINCT a.session_id) FILTER (WHERE a.status IS NOT NULL), 0), 1) AS persen_hadir
                 FROM schedules sch
                 JOIN class_sessions cs ON cs.schedule_id = sch.id
-                JOIN attendances a ON a.session_id = cs.id AND a.student_id = e.student_id
-                WHERE sch.tutor_id = %s AND sch.program_id = e.program_id
+                JOIN attendances a ON a.session_id = cs.id AND a.enrollment_id = e.id AND a.student_id = e.student_id
+                WHERE sch.tutor_id = %s AND sch.program_id = e.program_id AND cs.status = 'selesai'
             ) a ON TRUE
             WHERE e.student_id = %s AND e.program_id = %s AND e.status = 'aktif'
               AND EXISTS (SELECT 1 FROM schedules sx WHERE sx.tutor_id = %s AND sx.program_id = e.program_id)
@@ -172,17 +172,46 @@ def daftar_pertemuan(tutor_id: int, *, program_id: int | None = None, limit: int
         return cur.fetchall()
 
 
+def daftar_pertemuan_jadwal_tutor(tutor_id: int, schedule_id: int, limit: int = 30):
+    """Sesi yang benar-benar tersimpan; kepemilikan jadwal dicek pada SQL."""
+    if type(tutor_id) is not int or tutor_id <= 0:
+        raise ValueError("Tutor tidak valid.")
+    if type(schedule_id) is not int or schedule_id <= 0:
+        raise ValueError("Jadwal tidak valid.")
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Batas sesi tidak valid.")
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT cs.id AS session_id, cs.tanggal, cs.pertemuan_ke,
+                   cs.topik, cs.ringkasan, cs.status::text AS status_pertemuan,
+                   (SELECT COUNT(*)::int FROM attendances a WHERE a.session_id = cs.id) AS jumlah_absen
+            FROM class_sessions cs
+            JOIN schedules s ON s.id = cs.schedule_id
+            WHERE s.id = %s AND s.tutor_id = %s
+            ORDER BY cs.tanggal DESC, cs.id DESC
+            LIMIT %s;
+            """,
+            (schedule_id, tutor_id, limit),
+        )
+        return cur.fetchall()
+
+
 def buka_pertemuan(tutor_id: int, schedule_id: int) -> dict:
     """Buat sesi hari ini secara atomik; jika sudah ada, gunakan sesi yang sama."""
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT id FROM schedules WHERE id = %s AND tutor_id = %s AND aktif = TRUE FOR UPDATE;",
+            "SELECT id, hari::text AS hari FROM schedules WHERE id = %s AND tutor_id = %s AND aktif = TRUE FOR UPDATE;",
             (schedule_id, tutor_id),
         )
-        if cur.fetchone() is None:
+        jadwal = cur.fetchone()
+        if jadwal is None:
             raise ValueError("Jadwal tidak ditemukan, bukan milikmu, atau sudah nonaktif.")
         cur.execute("SELECT CURRENT_DATE AS tanggal;")
         tanggal = cur.fetchone()["tanggal"]
+        hari = ("senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu")
+        if jadwal["hari"] != hari[tanggal.weekday()]:
+            raise ValueError("Hari ini bukan hari jadwal tersebut. Pilih jadwal yang sesuai.")
         cur.execute(
             "SELECT id, pertemuan_ke FROM class_sessions WHERE schedule_id = %s AND tanggal = %s;",
             (schedule_id, tanggal),
@@ -209,11 +238,122 @@ def buka_pertemuan(tutor_id: int, schedule_id: int) -> dict:
         return {"session_id": session_id, "pertemuan_ke": nomor, "tanggal": tanggal, "dibuat": True}
 
 
+
+def ringkasan_pertemuan(tutor_id: int, session_id: int):
+    """Detail sesi hanya bagi tutor pemiliknya; count absensi BUKAN status selesai."""
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT cs.id AS session_id, cs.tanggal, cs.pertemuan_ke,
+                   cs.topik, cs.ringkasan, cs.status::text AS status_pertemuan,
+                   cs.alasan_batal, cs.selesai_at, s.program_id,
+                   p.kode AS kode_program, p.nama AS nama_program,
+                   r.nama AS nama_ruang, s.hari::text AS hari,
+                   s.jam_mulai, s.jam_selesai,
+                   (SELECT COUNT(*)::int FROM attendances a
+                    WHERE a.session_id = cs.id) AS jumlah_absen
+            FROM class_sessions cs
+            JOIN schedules s ON s.id = cs.schedule_id
+            JOIN programs p ON p.id = s.program_id
+            JOIN rooms r ON r.id = s.room_id
+            WHERE cs.id = %s AND s.tutor_id = %s;
+        """, (session_id, tutor_id))
+        return cur.fetchone()
+
+
+def _peserta_sesi(cur, session_id: int, program_id: int, tanggal):
+    """Roster sementara per tanggal. Isolasi enrollment penuh ditangani E3-C.
+
+    Siswa baru setelah tanggal sesi tidak dihitung; rekaman absensi historis
+    tetap masuk agar pembatalan enrollment tidak menghapus bukti lama.
+    """
+    cur.execute("""
+        SELECT DISTINCT e.student_id
+        FROM enrollments e
+        WHERE e.program_id = %s
+          AND ((e.status = 'aktif' AND COALESCE(e.processed_at::date, e.created_at::date) <= %s::date)
+            OR EXISTS (SELECT 1 FROM attendances a
+                       WHERE a.session_id = %s AND a.student_id = e.student_id))
+        ORDER BY e.student_id;
+    """, (program_id, tanggal, session_id))
+    return {row['student_id'] for row in cur.fetchall()}
+
+
+def selesaikan_pertemuan(tutor_id: int, session_id: int) -> dict:
+    """Perubahan status dan validasi seluruh absensi dalam satu transaksi."""
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT cs.id, cs.tanggal, cs.status::text AS status_pertemuan, s.program_id
+            FROM class_sessions cs JOIN schedules s ON s.id = cs.schedule_id
+            WHERE cs.id = %s AND s.tutor_id = %s FOR UPDATE OF cs;
+        """, (session_id, tutor_id))
+        sesi = cur.fetchone()
+        if not sesi:
+            raise ValueError('Pertemuan tidak ditemukan atau bukan milikmu.')
+        if sesi['status_pertemuan'] == 'selesai':
+            return {'sudah_selesai': True}
+        if sesi['status_pertemuan'] == 'batal':
+            raise ValueError('Pertemuan yang dibatalkan tidak dapat diselesaikan.')
+        peserta = _peserta_sesi(cur, session_id, sesi['program_id'], sesi['tanggal'])
+        if not peserta:
+            raise ValueError('Belum ada peserta yang sah untuk pertemuan ini.')
+        cur.execute('SELECT student_id FROM attendances WHERE session_id = %s;', (session_id,))
+        tercatat = {row['student_id'] for row in cur.fetchall()}
+        kurang = peserta - tercatat
+        if kurang:
+            raise ValueError(f'Absensi belum lengkap: {len(kurang)} dari {len(peserta)} siswa belum dicatat.')
+        if tercatat - peserta:
+            raise ValueError('Terdapat absensi di luar daftar peserta sah. Periksa data terlebih dahulu.')
+        cur.execute("""
+            UPDATE class_sessions SET status = 'selesai', selesai_at = now()
+            WHERE id = %s AND status IN ('perlu_laporan', 'terlaksana')
+            RETURNING id;
+        """, (session_id,))
+        if cur.fetchone() is None:
+            raise ValueError('Status pertemuan telah berubah. Muat ulang data.')
+        cur.execute("""
+            INSERT INTO activity_logs (user_id, aksi, detail)
+            VALUES (%s, 'PERTEMUAN_DISELESAIKAN', %s);
+        """, (tutor_id, f'session_id={session_id}; peserta={len(peserta)}'))
+        conn.commit()
+        return {'sudah_selesai': False, 'jumlah_peserta': len(peserta)}
+
+
+def batalkan_pertemuan(tutor_id: int, session_id: int, alasan: str) -> bool:
+    """Pembatalan beralasan; sesi yang sudah memiliki absensi tak boleh dibatalkan."""
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT cs.status::text AS status_pertemuan
+            FROM class_sessions cs JOIN schedules s ON s.id = cs.schedule_id
+            WHERE cs.id = %s AND s.tutor_id = %s FOR UPDATE OF cs;
+        """, (session_id, tutor_id))
+        sesi = cur.fetchone()
+        if not sesi:
+            raise ValueError('Pertemuan tidak ditemukan atau bukan milikmu.')
+        if sesi['status_pertemuan'] in ('batal', 'selesai'):
+            raise ValueError('Pertemuan yang sudah selesai atau batal tidak dapat dibatalkan ulang.')
+        cur.execute('SELECT EXISTS (SELECT 1 FROM attendances WHERE session_id = %s) AS ada;', (session_id,))
+        if cur.fetchone()['ada']:
+            raise ValueError('Sudah ada absensi. Pembatalan dihentikan agar data kehadiran tetap aman.')
+        cur.execute("""
+            UPDATE class_sessions SET status = 'batal', alasan_batal = %s
+            WHERE id = %s AND status IN ('perlu_laporan', 'terlaksana')
+            RETURNING id;
+        """, (alasan, session_id))
+        if cur.fetchone() is None:
+            raise ValueError('Status pertemuan berubah. Muat ulang data.')
+        cur.execute("""
+            INSERT INTO activity_logs (user_id, aksi, detail)
+            VALUES (%s, 'PERTEMUAN_DIBATALKAN', %s);
+        """, (tutor_id, f'session_id={session_id}; alasan={alasan[:100]}'))
+        conn.commit()
+        return True
+
 def daftar_absensi_sesi(tutor_id: int, session_id: int):
+    """Roster sesuai enrollment sesi. Arsip belum terpeta tidak ditampilkan sebagai status baru."""
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT cs.id, cs.status::text AS status_pertemuan, s.program_id
+            SELECT cs.id, cs.tanggal, cs.status::text AS status_pertemuan, s.program_id
             FROM class_sessions cs JOIN schedules s ON s.id = cs.schedule_id
             WHERE cs.id = %s AND s.tutor_id = %s;
             """,
@@ -224,28 +364,95 @@ def daftar_absensi_sesi(tutor_id: int, session_id: int):
             raise ValueError("Pertemuan tidak ditemukan atau bukan milikmu.")
         cur.execute(
             """
-            SELECT st.user_id AS student_id, st.nis, u.nama_lengkap,
-                   a.status::text AS status_absensi, a.keterangan
-            FROM enrollments e
-            JOIN students st ON st.user_id = e.student_id
+            SELECT DISTINCT st.user_id AS student_id, st.nis, u.nama_lengkap,
+                   selected.enrollment_id,
+                   a.status::text AS status_absensi, a.keterangan,
+                   EXISTS (
+                       SELECT 1 FROM attendances legacy
+                       WHERE legacy.session_id = %s
+                         AND legacy.student_id = st.user_id
+                         AND legacy.enrollment_id IS NULL
+                   ) AS riwayat_lama_belum_terhubung
+            FROM students st
             JOIN users u ON u.id = st.user_id
-            LEFT JOIN attendances a ON a.student_id = e.student_id AND a.session_id = %s
-            WHERE e.program_id = %s
-              AND (e.status = 'aktif' OR a.session_id IS NOT NULL)
+            JOIN LATERAL (
+                SELECT e.id AS enrollment_id
+                FROM enrollments e
+                LEFT JOIN attendances a
+                  ON a.enrollment_id = e.id
+                     AND a.student_id = e.student_id AND a.session_id = %s
+                WHERE e.student_id = st.user_id AND e.program_id = %s
+                  AND ((e.status = 'aktif'
+                        AND COALESCE(e.processed_at::date, e.created_at::date) <= %s::date)
+                       OR a.session_id IS NOT NULL)
+                ORDER BY (a.session_id IS NOT NULL) DESC, e.id DESC
+                LIMIT 1
+            ) selected ON TRUE
+            LEFT JOIN attendances a
+              ON a.enrollment_id = selected.enrollment_id
+                 AND a.student_id = st.user_id AND a.session_id = %s
             ORDER BY u.nama_lengkap, st.user_id;
             """,
-            (session_id, sesi["program_id"]),
+            (session_id, session_id, sesi['program_id'], sesi['tanggal'], session_id),
         )
         return cur.fetchall()
 
 
+def _enrollment_sah_untuk_absensi(cur, student_id: int, program_id: int, tanggal) -> int:
+    """Tentukan tepat satu enrollment aktif yang valid pada tanggal sesi.
+
+    Jangan menebak saat terjadi pendaftaran ulang pada hari yang sama; waktu
+    pembatalan historis tidak cukup lengkap untuk menentukan kepemilikan sesi.
+    """
+    cur.execute(
+        """
+        SELECT e.id AS enrollment_id
+        FROM enrollments e
+        WHERE e.student_id = %s AND e.program_id = %s AND e.status = 'aktif'
+          AND COALESCE(e.processed_at::date, e.created_at::date) <= %s::date
+        FOR UPDATE OF e;
+        """,
+        (student_id, program_id, tanggal),
+    )
+    candidates = cur.fetchall()
+    if len(candidates) != 1:
+        raise ValueError(
+            f"Siswa ID {student_id}: tidak ditemukan tepat satu enrollment aktif "
+            "untuk tanggal pertemuan. Absensi tidak disimpan."
+        )
+    enrollment_id = candidates[0]["enrollment_id"]
+    # Kasus batal dan daftar ulang pada tanggal yang sama tidak dapat
+    # dibedakan dengan DATE pada class_sessions. Fail closed.
+    cur.execute(
+        """
+        SELECT EXISTS (
+          SELECT 1 FROM enrollments other
+          WHERE other.student_id = %s AND other.program_id = %s
+            AND other.id <> %s AND other.created_at::date = %s::date
+        ) AS ambigu;
+        """,
+        (student_id, program_id, enrollment_id, tanggal),
+    )
+    if cur.fetchone()["ambigu"]:
+        raise ValueError(
+            f"Siswa ID {student_id}: ada pendaftaran lain pada hari sesi yang sama. "
+            "Perlu peninjauan Admin sebelum mencatat absensi."
+        )
+    return enrollment_id
+
+
 def simpan_absensi(tutor_id: int, session_id: int, records: list[dict]) -> int:
+    """Absensi baru selalu menunjuk enrollment yang sah; legacy NULL tak ditimpa.
+
+    Penguncian sesi + enrollment, verifikasi data lama, dan upsert berlangsung
+    dalam satu transaksi. Kegagalan salah satu baris membatalkan seluruh batch.
+    """
     if not isinstance(records, list) or not records:
         raise ValueError("Tidak ada data absensi untuk disimpan.")
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT cs.id, cs.status::text AS status_pertemuan, s.program_id
+            SELECT cs.id, cs.tanggal, cs.status::text AS status_pertemuan, s.program_id
             FROM class_sessions cs JOIN schedules s ON s.id = cs.schedule_id
             WHERE cs.id = %s AND s.tutor_id = %s FOR UPDATE OF cs;
             """,
@@ -254,8 +461,8 @@ def simpan_absensi(tutor_id: int, session_id: int, records: list[dict]) -> int:
         sesi = cur.fetchone()
         if not sesi:
             raise ValueError("Pertemuan tidak ditemukan atau bukan milikmu.")
-        if sesi["status_pertemuan"] == "batal":
-            raise ValueError("Absensi tidak dapat diubah untuk pertemuan yang dibatalkan.")
+        if sesi["status_pertemuan"] in ("batal", "selesai"):
+            raise ValueError("Absensi tidak dapat diubah untuk pertemuan yang dibatalkan atau selesai.")
         seen = set()
         for record in records:
             student_id = record["student_id"]
@@ -263,28 +470,44 @@ def simpan_absensi(tutor_id: int, session_id: int, records: list[dict]) -> int:
             if student_id in seen:
                 raise ValueError("Siswa yang sama tercantum lebih dari sekali.")
             seen.add(student_id)
-            cur.execute(
-                """
-                SELECT 1 FROM enrollments e
-                WHERE e.student_id = %s AND e.program_id = %s
-                  AND (e.status = 'aktif' OR EXISTS (
-                      SELECT 1 FROM attendances a WHERE a.session_id = %s AND a.student_id = e.student_id
-                  ))
-                FOR UPDATE;
-                """,
-                (student_id, sesi["program_id"], session_id),
+            enrollment_id = _enrollment_sah_untuk_absensi(
+                cur, student_id, sesi["program_id"], sesi["tanggal"]
             )
-            if cur.fetchone() is None:
-                raise ValueError(f"Siswa ID {student_id} bukan peserta sah program ini.")
             cur.execute(
                 """
-                INSERT INTO attendances (session_id, student_id, status, keterangan, dicatat_at)
-                VALUES (%s, %s, %s::attendance_status, %s, now())
+                SELECT a.enrollment_id FROM attendances a
+                WHERE a.session_id = %s AND a.student_id = %s FOR UPDATE;
+                """,
+                (session_id, student_id),
+            )
+            previous = cur.fetchone()
+            if previous is not None and previous["enrollment_id"] is None:
+                raise ValueError(
+                    f"Siswa ID {student_id}: absensi lama belum memiliki enrollment_id. "
+                    "Perlu peninjauan Admin, tidak boleh ditimpa otomatis."
+                )
+            if previous is not None and previous["enrollment_id"] != enrollment_id:
+                raise ValueError(
+                    f"Siswa ID {student_id}: absensi milik pendaftaran berbeda. "
+                    "Tidak dapat mengalihkan riwayat ke enrollment baru."
+                )
+            cur.execute(
+                """
+                INSERT INTO attendances
+                    (session_id, student_id, enrollment_id, status, keterangan, dicatat_at)
+                VALUES (%s, %s, %s, %s::attendance_status, %s, now())
                 ON CONFLICT (session_id, student_id) DO UPDATE
-                SET status = EXCLUDED.status, keterangan = EXCLUDED.keterangan, dicatat_at = now();
+                SET status = EXCLUDED.status, keterangan = EXCLUDED.keterangan,
+                    dicatat_at = now()
+                WHERE attendances.enrollment_id = EXCLUDED.enrollment_id
+                RETURNING enrollment_id;
                 """,
-                (session_id, student_id, status, record.get("keterangan")),
+                (session_id, student_id, enrollment_id, status, record.get("keterangan")),
             )
+            # Guard kedua untuk perubahan konkuren/rekaman legacy: tidak ada
+            # hasil RETURNING berarti baris tidak berubah, batch dibatalkan.
+            if cur.fetchone() is None:
+                raise ValueError("Absensi berubah saat disimpan; muat ulang dan periksa enrollment.")
         cur.execute(
             "INSERT INTO activity_logs (user_id, aksi, detail) VALUES (%s, 'ABSENSI_DISIMPAN', %s);",
             (tutor_id, f"session_id={session_id}; jumlah_siswa={len(records)}"),
@@ -294,28 +517,45 @@ def simpan_absensi(tutor_id: int, session_id: int, records: list[dict]) -> int:
 
 
 def rekap_absensi_tutor(tutor_id: int, program_id: int):
+    """Rekap enrollment aktif siswa tutor; hanya sesi selesai dengan absensi terhubung."""
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT st.user_id AS student_id, st.nis, u.nama_lengkap,
-                   COUNT(DISTINCT cs.id)::int AS total_pertemuan,
-                   COUNT(DISTINCT a.session_id) FILTER (WHERE a.status = 'H')::int AS hadir,
-                   COUNT(DISTINCT a.session_id) FILTER (WHERE a.status = 'I')::int AS izin,
-                   COUNT(DISTINCT a.session_id) FILTER (WHERE a.status = 'S')::int AS sakit,
-                   COUNT(DISTINCT a.session_id) FILTER (WHERE a.status = 'A')::int AS alpa,
-                   ROUND(100.0 * COUNT(DISTINCT a.session_id) FILTER (WHERE a.status = 'H')
-                     / NULLIF(COUNT(DISTINCT a.session_id) FILTER (WHERE a.status IS NOT NULL), 0), 1) AS persen_hadir
+            SELECT e.id AS enrollment_id, st.user_id AS student_id,
+                   st.nis, u.nama_lengkap,
+                   COALESCE(a.total_pertemuan, 0)::int AS total_pertemuan,
+                   COALESCE(a.hadir, 0)::int AS hadir,
+                   COALESCE(a.izin, 0)::int AS izin,
+                   COALESCE(a.sakit, 0)::int AS sakit,
+                   COALESCE(a.alpa, 0)::int AS alpa,
+                   a.persen_hadir
             FROM enrollments e
             JOIN students st ON st.user_id = e.student_id
             JOIN users u ON u.id = st.user_id AND u.status = 'aktif'
-            JOIN schedules s ON s.program_id = e.program_id AND s.tutor_id = %s
-            JOIN class_sessions cs ON cs.schedule_id = s.id
-            LEFT JOIN attendances a ON a.session_id = cs.id AND a.student_id = e.student_id
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS total_pertemuan,
+                       COUNT(*) FILTER (WHERE at.status = 'H')::int AS hadir,
+                       COUNT(*) FILTER (WHERE at.status = 'I')::int AS izin,
+                       COUNT(*) FILTER (WHERE at.status = 'S')::int AS sakit,
+                       COUNT(*) FILTER (WHERE at.status = 'A')::int AS alpa,
+                       ROUND(100.0 * COUNT(*) FILTER (WHERE at.status = 'H')
+                         / NULLIF(COUNT(*), 0), 1) AS persen_hadir
+                FROM attendances at
+                JOIN class_sessions cs ON cs.id = at.session_id AND cs.status = 'selesai'
+                JOIN schedules sch ON sch.id = cs.schedule_id
+                WHERE at.enrollment_id = e.id
+                  AND at.student_id = e.student_id
+                  AND sch.program_id = e.program_id
+                  AND sch.tutor_id = %s
+            ) a ON TRUE
             WHERE e.program_id = %s AND e.status = 'aktif'
-            GROUP BY st.user_id, st.nis, u.nama_lengkap
-            ORDER BY u.nama_lengkap;
+              AND EXISTS (
+                  SELECT 1 FROM schedules sx
+                  WHERE sx.tutor_id = %s AND sx.program_id = e.program_id
+              )
+            ORDER BY u.nama_lengkap, st.user_id;
             """,
-            (tutor_id, program_id),
+            (tutor_id, program_id, tutor_id),
         )
         return cur.fetchall()
 
@@ -416,7 +656,7 @@ def simpan_catatan(tutor_id: int, session_id: int, *, topik: str | None, ringkas
             UPDATE class_sessions cs SET topik = %s, ringkasan = %s
             FROM schedules s
             WHERE cs.schedule_id = s.id AND cs.id = %s AND s.tutor_id = %s
-              AND cs.status <> 'batal'
+              AND cs.status NOT IN ('batal', 'selesai')
             RETURNING cs.id;
             """,
             (topik, ringkasan, session_id, tutor_id),

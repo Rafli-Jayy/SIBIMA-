@@ -82,7 +82,9 @@ def buat_enrollment(student_id: int, program_id: int):
                 """
                 SELECT id, status
                 FROM enrollments
-                WHERE student_id = %s AND program_id = %s;
+                WHERE student_id = %s AND program_id = %s
+                  AND status IN ('menunggu_pembayaran', 'menunggu', 'aktif')
+                ORDER BY id DESC LIMIT 1;
                 """,
                 (student_id, program_id),
             )
@@ -754,12 +756,24 @@ def pindahkan_admin(
 
 
 def batalkan_admin(enrollment_id: int, processed_by: int, alasan: str | None = None) -> dict:
-    """Batalkan pendaftaran menunggu/aktif tanpa menghapus riwayat tagihan."""
+    """Batalkan kelas admin dengan refund *penuh* semua pembayaran lunas.
+
+    Seluruh invoice, pembayaran dan refund dalam SATU transaksi. Kunci enrollment
+    lebih dulu agar checkout dan pembatalan tidak dapat saling mendahului.
+    Refund hanya berupa pencatatan simulasi; tidak ada transaksi uang nyata.
+    """
+    from decimal import Decimal
+
     if type(enrollment_id) is not int or enrollment_id <= 0:
         raise ValueError("ID pendaftaran tidak valid.")
     if type(processed_by) is not int or processed_by <= 0:
         raise ValueError("ID administrator tidak valid.")
+    if alasan is not None and not isinstance(alasan, str):
+        raise ValueError("Alasan pembatalan tidak valid.")
     alasan = alasan.strip() if isinstance(alasan, str) else ""
+    if len(alasan) > 1000:
+        raise ValueError("Alasan pembatalan maksimal 1000 karakter.")
+    alasan_refund = alasan or "Pembatalan kelas oleh administrator."
 
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -781,33 +795,120 @@ def batalkan_admin(enrollment_id: int, processed_by: int, alasan: str | None = N
                     "pesan": "Hanya pendaftaran menunggu atau aktif yang dapat dibatalkan.",
                 }
 
+            # Lock invoice yang dimiliki enrollment; checkout memakai lock yang sama.
+            cur.execute(
+                """
+                SELECT id, no_invoice, status
+                FROM invoices WHERE enrollment_id = %s
+                ORDER BY id FOR UPDATE;
+                """,
+                (enrollment_id,),
+            )
+            invoices = cur.fetchall()
+            invoice_by_id = {i["id"]: i for i in invoices}
+            cur.execute(
+                """
+                SELECT pay.id AS payment_id, pay.invoice_id, pay.jumlah,
+                       pay.status AS payment_status
+                FROM payments pay JOIN invoices i ON i.id = pay.invoice_id
+                WHERE i.enrollment_id = %s
+                ORDER BY pay.id FOR UPDATE OF pay;
+                """,
+                (enrollment_id,),
+            )
+            payments = cur.fetchall()
+            paid = [p for p in payments if p["payment_status"] == "lunas"]
+            paid_by_invoice = {}
+            for pay in paid:
+                invoice = invoice_by_id[pay["invoice_id"]]
+                if invoice["status"] != "lunas":
+                    raise RuntimeError("Pembayaran lunas memiliki status invoice tidak konsisten; pembatalan dihentikan.")
+                paid_by_invoice[pay["invoice_id"]] = paid_by_invoice.get(pay["invoice_id"], 0) + 1
+            for invoice in invoices:
+                if invoice["status"] == "lunas" and paid_by_invoice.get(invoice["id"], 0) != 1:
+                    raise RuntimeError("Invoice lunas tidak mempunyai tepat satu pembayaran lunas; periksa data sebelum membatalkan.")
+
+            # Siswa sudah bayar tetapi masih menunggu keputusan admin: gunakan
+            # jalur penolakan yang sudah punya refund sendiri, bukan pembatalan ini.
+            if enrollment["status"] == "menunggu" and paid:
+                return {
+                    "berhasil": False,
+                    "pesan": "Pendaftaran sudah dibayar dan menunggu keputusan. Gunakan menu Tolak Pendaftaran agar refund penolakan diproses.",
+                }
+
+            refund_rows = []
+            for pay in paid:
+                invoice = invoice_by_id[pay["invoice_id"]]
+                # Kode refund unik, singkat, deterministik per payment.
+                kode_refund = f"RF-CAN-{pay['payment_id']}"
+                cur.execute(
+                    """
+                    INSERT INTO payment_refunds (payment_id, kode_refund, jumlah, alasan, status)
+                    VALUES (%s, %s, %s, %s, 'berhasil')
+                    RETURNING id, payment_id, kode_refund, jumlah, alasan,
+                              status, created_at, processed_at;
+                    """,
+                    (pay["payment_id"], kode_refund, pay["jumlah"], alasan_refund),
+                )
+                refund = cur.fetchone()
+                if refund is None:
+                    raise RuntimeError("Pencatatan refund gagal; transaksi dibatalkan.")
+                cur.execute(
+                    "UPDATE payments SET status = 'direfund' WHERE id = %s AND status = 'lunas' RETURNING id;",
+                    (pay["payment_id"],),
+                )
+                if cur.fetchone() is None:
+                    raise RuntimeError("Status pembayaran berubah saat proses refund; transaksi dibatalkan.")
+                refund_rows.append({**refund, "no_invoice": invoice["no_invoice"]})
+
+            # Jangan sisakan invoice aktif atau percobaan pembayaran yang masih pending.
+            cur.execute(
+                """
+                UPDATE payments pay SET status = 'gagal'
+                FROM invoices i
+                WHERE pay.invoice_id = i.id AND i.enrollment_id = %s
+                  AND pay.status IN ('menunggu_pembayaran', 'menunggu_konfirmasi');
+                """,
+                (enrollment_id,),
+            )
+            cur.execute(
+                "UPDATE invoices SET status = 'batal' WHERE enrollment_id = %s AND status <> 'batal';",
+                (enrollment_id,),
+            )
             cur.execute(
                 """
                 UPDATE enrollments
-                SET status = 'batal', processed_by = %s, processed_at = now()
-                WHERE id = %s AND status IN ('menunggu_pembayaran', 'menunggu', 'aktif')
+                SET status = 'batal', processed_by = %s, processed_at = now(),
+                    alasan_tolak = %s
+                WHERE id = %s AND status IN ('menunggu', 'aktif')
                 RETURNING id;
                 """,
-                (processed_by, enrollment_id),
+                (processed_by, alasan_refund, enrollment_id),
             )
             if cur.fetchone() is None:
-                return {"berhasil": False, "pesan": "Pendaftaran sudah berubah; muat ulang daftar."}
+                raise RuntimeError("Status pendaftaran berubah saat pembatalan; transaksi dibatalkan.")
 
-            detail = (
-                f"Pendaftaran {enrollment_id} pada program {enrollment['program_id']} "
-                f"dibatalkan oleh admin. Alasan: {alasan or 'tidak dicantumkan'}. "
-                "Riwayat tagihan tidak dihapus."
-            )
+            total_refund = sum((r["jumlah"] for r in refund_rows), Decimal("0"))
             cur.execute(
                 "INSERT INTO activity_logs (user_id, aksi, detail) VALUES (%s, 'ENROLLMENT_DIBATALKAN', %s);",
-                (processed_by, detail),
+                (processed_by,
+                 f"Admin membatalkan enrollment {enrollment_id} ({enrollment['nama_program']}). "
+                 f"Refund simulasi penuh: {len(refund_rows)} transaksi, total {total_refund}. "
+                 f"Alasan: {alasan_refund}"),
             )
         conn.commit()
 
     return {
         "berhasil": True,
+        "enrollment_id": enrollment_id,
+        "student_id": enrollment["student_id"],
+        "nama_program": enrollment["nama_program"],
+        "alasan": alasan_refund,
+        "refunds": refund_rows,
+        "total_refund": total_refund,
         "pesan": (
             f"Pendaftaran {enrollment['nama_program']} dibatalkan. "
-            "Riwayat tagihan tetap dipertahankan untuk audit dan penagihan."
-        ),
+            f"Refund simulasi penuh tercatat untuk {len(refund_rows)} pembayaran "
+            f"(total Rp{total_refund:,.0f}). Semua tagihan ditutup; riwayat tetap tersimpan."
+        ).replace(f"Rp{total_refund:,.0f}", f"Rp{total_refund:,.0f}".replace(",", ".")),
     }

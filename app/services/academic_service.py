@@ -97,6 +97,23 @@ def daftar_pertemuan(program_id=None):
         return False, f"Daftar pertemuan gagal diambil ({type(exc).__name__})."
 
 
+def pertemuan_per_jadwal(schedule_id):
+    """Riwayat sesi untuk jadwal milik tutor; tidak membuat sesi baru."""
+    user = _tutor_aktif()
+    if not user:
+        return False, "Akses ditolak."
+    try:
+        schedule_id = _id(schedule_id, "Jadwal")
+        owned = academic_repo.daftar_jadwal_tutor(user["id"], aktif=None)
+        if not any(j["id"] == schedule_id for j in owned):
+            return False, "Jadwal ini bukan milik tutor yang sedang login."
+        return True, academic_repo.daftar_pertemuan_jadwal_tutor(user["id"], schedule_id)
+    except ValueError as exc:
+        return False, str(exc)
+    except psycopg.Error as exc:
+        return False, f"Riwayat pertemuan gagal diambil ({type(exc).__name__})."
+
+
 def buka_pertemuan(schedule_id):
     user = _tutor_aktif()
     if not user:
@@ -114,6 +131,66 @@ def buka_pertemuan(schedule_id):
             return False, "Pertemuan dengan tanggal/nomor tersebut sudah ada. Muat ulang daftar pertemuan."
         return False, f"Pertemuan gagal dibuat ({type(exc).__name__})."
 
+
+
+def siapkan_pertemuan(schedule_id):
+    """Tutor memilih jadwal hari ini; satu sesi per tanggal (tidak buat jadwal baru)."""
+    user = _tutor_aktif()
+    if not user:
+        return False, 'Akses ditolak.'
+    try:
+        return True, academic_repo.buka_pertemuan(user['id'], _id(schedule_id, 'Jadwal'))
+    except ValueError as exc:
+        return False, str(exc)
+    except psycopg.Error as exc:
+        return False, f'Pertemuan tidak dapat disiapkan ({type(exc).__name__}).'
+
+
+def ringkasan_pertemuan(session_id):
+    user = _tutor_aktif()
+    if not user:
+        return False, 'Akses ditolak.'
+    try:
+        result = academic_repo.ringkasan_pertemuan(user['id'], _id(session_id, 'Pertemuan'))
+        if not result:
+            return False, 'Pertemuan tidak ditemukan atau bukan milikmu.'
+        return True, result
+    except ValueError as exc:
+        return False, str(exc)
+    except psycopg.Error as exc:
+        return False, f'Ringkasan gagal diambil ({type(exc).__name__}).'
+
+
+def selesaikan_pertemuan(session_id):
+    user = _tutor_aktif()
+    if not user:
+        return False, 'Akses ditolak.'
+    try:
+        result = academic_repo.selesaikan_pertemuan(user['id'], _id(session_id, 'Pertemuan'))
+        if result.get('sudah_selesai'):
+            return True, 'Pertemuan sudah berstatus selesai.'
+        return True, f"Pertemuan selesai. Absensi {result['jumlah_peserta']} siswa tercatat."
+    except ValueError as exc:
+        return False, str(exc)
+    except psycopg.Error as exc:
+        return False, f'Penyelesaian gagal ({type(exc).__name__}).'
+
+
+def batalkan_pertemuan(session_id, alasan):
+    user = _tutor_aktif()
+    if not user:
+        return False, 'Akses ditolak.'
+    try:
+        identitas = _id(session_id, 'Pertemuan')
+        alasan = validation.teks_catatan(alasan, 'Alasan pembatalan', 500, wajib=True)
+        if len(alasan.strip()) < 5:
+            raise ValueError('Alasan pembatalan minimal 5 karakter.')
+        academic_repo.batalkan_pertemuan(user['id'], identitas, alasan.strip())
+        return True, 'Pertemuan dibatalkan dan alasannya dicatat.'
+    except ValueError as exc:
+        return False, str(exc)
+    except psycopg.Error as exc:
+        return False, f'Pembatalan gagal ({type(exc).__name__}).'
 
 def daftar_absensi(session_id):
     user = _tutor_aktif()

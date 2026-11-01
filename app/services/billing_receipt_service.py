@@ -355,7 +355,7 @@ def kirim_email_simulasi_gagal(detail: dict) -> tuple[bool, str]:
 
 
 def buat_pdf_bukti_refund(detail: dict) -> Path:
-    """Buat dokumen bukti refund simulasi untuk pendaftaran yang ditolak."""
+    """Buat bukti refund simulasi untuk penolakan atau pembatalan kelas."""
     if not isinstance(detail, dict) or detail.get("status") != "berhasil":
         raise ValueError("Refund belum berstatus berhasil.")
     from reportlab.lib.enums import TA_CENTER
@@ -418,10 +418,15 @@ def kirim_pdf_refund_via_email(detail: dict, pdf_path: str | Path) -> tuple[bool
     refund_amount = _rupiah(detail.get("jumlah"))
     reason = str(detail.get("alasan") or "-")
     refund_code = str(detail.get("kode_refund") or "-")
+    is_cancellation = detail.get("jenis_refund") == "pembatalan"
+    kondisi = "dibatalkan oleh admin" if is_cancellation else "ditolak"
+    judul = "Kelas dibatalkan oleh administrator" if is_cancellation else "Pendaftaran belum dapat diterima"
+    label = "PEMBATALAN KELAS" if is_cancellation else "HASIL PENDAFTARAN"
+    alasan_label = "Alasan pembatalan" if is_cancellation else "Alasan penolakan"
     msg.set_content(
         f"Halo {student_name},\n\n"
-        f"Pendaftaran program {program_name} ditolak. Refund simulasi sebesar {refund_amount} "
-        f"({refund_code}) berhasil dicatat.\nAlasan penolakan: {reason}\n\n"
+        f"Pendaftaran program {program_name} {kondisi}. Refund simulasi sebesar {refund_amount} "
+        f"({refund_code}) berhasil dicatat.\n{alasan_label}: {reason}\n\n"
         "Refund ini hanya simulasi; tidak ada uang sungguhan yang dikirim. "
         "Terlampir dokumen bukti refund simulasi.\n\nTim SIBIMA KECE"
     )
@@ -429,10 +434,10 @@ def kirim_pdf_refund_via_email(detail: dict, pdf_path: str | Path) -> tuple[bool
         f"""<!doctype html><html lang='id'><body style='margin:0;padding:24px;background:#eef2f7;font-family:Arial,sans-serif;color:#172033;'>
         <table role='presentation' style='max-width:600px;width:100%;margin:auto;background:#fff;border-radius:14px;border-collapse:collapse;overflow:hidden;'>
         <tr><td style='padding:24px;background:#142b4a;color:#fff;text-align:center;font-size:22px;font-weight:bold;'>SIBIMA KECE</td></tr>
-        <tr><td style='padding:28px;'><p style='color:#b91c1c;font-size:12px;font-weight:bold;'>HASIL PENDAFTARAN</p>
-        <h2 style='color:#991b1b;margin:8px 0;'>Pendaftaran belum dapat diterima</h2><p>Halo <strong>{html.escape(student_name)}</strong>, pendaftaran program <strong>{html.escape(program_name)}</strong> ditolak.</p>
+        <tr><td style='padding:28px;'><p style='color:#b91c1c;font-size:12px;font-weight:bold;'>{html.escape(label)}</p>
+        <h2 style='color:#991b1b;margin:8px 0;'>{html.escape(judul)}</h2><p>Halo <strong>{html.escape(student_name)}</strong>, pendaftaran program <strong>{html.escape(program_name)}</strong> {html.escape(kondisi)}.</p>
         <div style='background:#f1f6fc;padding:18px;border-radius:10px;'><div style='font-size:12px;color:#64748b;'>REFUND SIMULASI BERHASIL</div><div style='font-size:25px;font-weight:bold;color:#142b4a;'>{html.escape(refund_amount)}</div><div style='font-size:12px;color:#64748b;'>Kode: {html.escape(refund_code)}</div></div>
-        <p><strong>Alasan:</strong> {html.escape(reason)}</p><p style='padding:12px;background:#fffbeb;color:#92400e;font-size:12px;'>Refund ini hanya simulasi internal SIBIMA. Tidak ada uang sungguhan yang dikirim atau dikembalikan.</p>
+        <p><strong>{html.escape(alasan_label)}:</strong> {html.escape(reason)}</p><p style='padding:12px;background:#fffbeb;color:#92400e;font-size:12px;'>Refund ini hanya simulasi internal SIBIMA. Tidak ada uang sungguhan yang dikirim atau dikembalikan.</p>
         <p>Bukti refund PDF terlampir.</p><p>Salam,<br><strong>Tim SIBIMA KECE</strong></p></td></tr></table></body></html>""",
         subtype="html",
     )

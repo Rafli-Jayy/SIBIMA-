@@ -9,9 +9,12 @@ from questionary import Choice, Separator, Style
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.markup import escape
 
 from app.services import auth_service, student_service
 from app.ui.console import bersihkan_layar, console, gagal, info, peringatan, sukses
+from app.ui.jadwal_context import kondisi_jadwal_siswa, jadwal_rutin_terdekat, jam_jadwal, label_hari
+from app.ui.proyeksi_pertemuan import proyeksi_jadwal, CATATAN_PROYEKSI
 from app.utils.formatters import rupiah, tanggal
 
 
@@ -43,7 +46,7 @@ def _header(judul: str, subjudul: str = ""):
     bersihkan_layar()
     isi = f"[bold cyan]S I B I M A[/bold cyan]\n[bold white]{judul.upper()}[/bold white]"
     if subjudul:
-        isi += f"\n[dim]{subjudul}[/dim]"
+        isi += f"\n[dim]{escape(str(subjudul))}[/dim]"
     console.print(Panel(isi, border_style="cyan", padding=(1, 3), expand=True))
 
 
@@ -205,34 +208,240 @@ def tampilkan_katalog_paginasi(programs):
         back_label="Lanjut pilih program",
     )
 
-def menu_kelas_saya():
-    ok, payload = student_service.kelas_saya()
-    rows = _hasil(ok, payload, "KELAS SAYA")
+def _panel_info_kelas(row, jadwal=None):
+    """Identitas satu kelas tanpa menebak jadwal atau aktivitas tutor."""
+    status = str(row.get("status") or "—")
+    locked = status == "aktif" and bool(row.get("akses_terkunci"))
+    status_txt = "AKSES TERKUNCI (TAGIHAN)" if locked else status.upper()
+    konten = (
+        f"[bold]Program[/bold]       : {escape(str(row.get('nama_program') or '—'))} "
+        f"({escape(str(row.get('kode') or '—'))})\n"
+        f"[bold]Jenjang[/bold]       : {escape(str(row.get('jenjang') or '—'))}\n"
+        f"[bold]Tutor terjadwal[/bold]: {escape(str(row.get('tutor') or 'Belum ditentukan'))}\n"
+        f"[bold]Status[/bold]        : {escape(status_txt)}\n"
+        f"[bold]Terdaftar[/bold]     : {escape(_tanggal(row.get('created_at')))}"
+    )
+    console.print(Panel(konten, title="INFORMASI KELAS", border_style="cyan", expand=True))
+    if locked:
+        peringatan("Akses akademik ditangguhkan karena tagihan lewat H+3. "
+                   "Menu Tagihan dan Pembayaran tetap bisa digunakan.")
+    elif status == "menunggu_pembayaran":
+        info("Pendaftaran belum aktif. Selesaikan pembayaran melalui menu Tagihan dan Pembayaran.")
+    elif status == "menunggu":
+        info("Pembayaran/pendaftaran sedang menunggu keputusan Admin.")
+    elif status == "aktif" and jadwal is not None:
+        if not jadwal:
+            peringatan("Kelas aktif, tetapi jadwal rutin belum tersedia. Silakan periksa dengan Admin.")
+        else:
+            table = Table(show_header=True, header_style="bold cyan", expand=True)
+            for name in ("Hari", "Waktu", "Tutor", "Ruang"):
+                table.add_column(name)
+            for r in jadwal:
+                table.add_row(label_hari(r.get("hari")), jam_jadwal(r),
+                              str(r.get("nama_tutor") or "Belum ditentukan"),
+                              str(r.get("nama_ruang") or "—"))
+            console.print(Panel(table, title="JADWAL RUTIN (bukan laporan pertemuan)",
+                                border_style="bright_blue", expand=True))
+
+
+def _label_status_sesi(status):
+    return {'batal': 'Dibatalkan', 'perlu_laporan': 'Menunggu laporan Tutor',
+            'selesai': 'Selesai', 'terlaksana': 'Catatan sesi tersedia (legacy; belum diverifikasi selesai)'}.get(
+                status, 'Status belum tersedia')
+
+
+def _riwayat_pertemuan_siswa(row):
+    """Riwayat hanya memuat sesi yang benar-benar tersimpan oleh tutor."""
+    ok, payload = student_service.pertemuan_saya(row["program_id"])
+    rows = _hasil(ok, payload, "PERTEMUAN TERCATAT")
     if rows is None:
         return
-    _tabel_paginasi(
-        "KELAS SAYA", rows,
-        [("Program", {"min_width": 24}), ("Jenjang", {"width": 12}), ("Tutor", {"min_width": 20}), ("Status", {"width": 24}), ("Terdaftar", {"width": 15})],
-        lambda r: (str(r.get("nama_program") or "—"), str(r.get("jenjang") or "—"), str(r.get("tutor") or "—"),
-                   "AKSES TERKUNCI (TAGIHAN)" if r.get("akses_terkunci") else str(r.get("status") or "—").upper(),
-                   _tanggal(r.get("created_at"))),
-        subjudul="Program yang sedang diikuti dan riwayat pendaftaran.",
-    )
+    while True:
+        _header("PERTEMUAN TERCATAT", row["nama_program"])
+        if not rows:
+            info("Belum ada laporan pertemuan dari tutor. Jadwal rutin bukan bukti kelas sudah terlaksana.")
+            _jeda()
+            return
+        t = Table(show_header=True, header_style="bold cyan", expand=True)
+        for title in ("Tanggal", "Ke-", "Materi", "Catatan", "Kehadiran saya"):
+            t.add_column(title, overflow="fold")
+        for s in rows[:20]:
+            status = ("Dibatalkan" if s.get("status_pertemuan") == "batal" else
+                      STATUS_ABSENSI.get(s.get("status_absensi"), "Belum dicatat tutor"))
+            t.add_row(_tanggal(s.get("tanggal")), str(s.get("pertemuan_ke") or "—"),
+                      str(s.get("topik") or "Belum dilaporkan"),
+                      "Ada" if s.get("ringkasan") else "Belum dilaporkan", status)
+        console.print(Panel(t, title="RIWAYAT SESI (maks. 20 terbaru)", border_style="blue", expand=True))
+        choices = [Choice(
+            f"#{s.get('pertemuan_ke') or '—'} • {_tanggal(s.get('tanggal'))} • "
+            f"{s.get('topik') or 'Materi belum dilaporkan'}", value=s["session_id"]
+        ) for s in rows[:20]]
+        pilihan = questionary.select("Lihat detail pertemuan:", choices=choices + [
+            Separator("────────────────────"), Choice("Kembali ke kelas", value="__back__")
+        ], style=GAYA, qmark="◆", pointer="▶").ask()
+        if pilihan in (None, "__back__"):
+            return
+        s = next((r for r in rows if r["session_id"] == pilihan), None)
+        if s is None:
+            continue
+        _header(f"DETAIL PERTEMUAN #{s.get('pertemuan_ke') or '—'}", row["nama_program"])
+        konten = (f"[bold]Tanggal[/bold] : {escape(_tanggal(s.get('tanggal')))}\n"
+                  f"[bold]Waktu[/bold]   : {escape(jam_jadwal(s))}\n"
+                  f"[bold]Tutor[/bold]   : {escape(str(s.get('nama_tutor') or '—'))}\n"
+                  f"[bold]Ruang[/bold]   : {escape(str(s.get('nama_ruang') or '—'))}\n"
+                  f"[bold]Status[/bold]  : {escape(_label_status_sesi(s.get('status_pertemuan')))}\n"
+                  f"[bold]Materi[/bold]  : {escape(str(s.get('topik') or 'Belum dilaporkan tutor'))}\n"
+                  f"[bold]Ringkasan[/bold]: {escape(str(s.get('ringkasan') or 'Belum dilaporkan tutor'))}\n"
+                  f"[bold]Absensi saya[/bold]: {escape('Dibatalkan' if s.get('status_pertemuan') == 'batal' else STATUS_ABSENSI.get(s.get('status_absensi'), 'Belum dicatat tutor'))}")
+        console.print(Panel(konten, title="INFORMASI PEMBELAJARAN", border_style="cyan", expand=True))
+        _jeda()
+
+
+def _sesi_per_program_jadwal(jadwal):
+    """Hanya untuk jadwal yang sudah dibatasi student_service (enrollment aktif, H+3).
+
+    Jika fetch gagal, None berarti status TIDAK DIKETAHUI, bukan 'belum dilaporkan'.
+    """
+    result = {}
+    for program_id in {j.get("program_id") for j in jadwal if j.get("program_id") is not None}:
+        ok, payload = student_service.pertemuan_saya(program_id)
+        result[program_id] = payload if ok else None
+    return result
+
+
+def _panel_rencana_siswa(jadwal, sesis, enrollments=()):
+    """Ringkas slot untuk kelas yang dapat diakses, perhatikan tanggal masuk siswa."""
+    active_since = {}
+    for e in enrollments:
+        if e.get("status") != "aktif" or e.get("akses_terkunci"):
+            continue
+        created = e.get("created_at")
+        enrolled_day = created.date() if isinstance(created, datetime) else created
+        if isinstance(enrolled_day, date):
+            active_since[e.get("program_id")] = max(
+                enrolled_day, active_since.get(e.get("program_id"), date.min)
+            )
+    for j in jadwal:
+        proyeksi = proyeksi_jadwal(j, sesis.get(j.get("program_id")))
+        if proyeksi is None:
+            continue
+        sebelumnya, berikutnya = proyeksi["sebelumnya"], proyeksi["berikutnya"]
+        since = active_since.get(j.get("program_id"))
+        if since and sebelumnya["tanggal"] < since:
+            sebelumnya = {**sebelumnya, "status": "Sebelum pendaftaran ini (tidak dihitung)"}
+        konten = (
+            f"[bold]{escape(str(j.get('nama_program') or 'Kelas'))}[/bold] • "
+            f"{escape(label_hari(j.get('hari')))} {escape(jam_jadwal(j))}\n"
+            f"[bold]Jadwal sebelumnya (perkiraan)[/bold]: {_tanggal(sebelumnya['tanggal'])}\n"
+            f"  {escape(sebelumnya['status'])}\n"
+            f"[bold]Jadwal berikutnya (perkiraan)[/bold]: {_tanggal(berikutnya['tanggal'])}\n"
+            f"  {escape(berikutnya['status'])}"
+        )
+        console.print(Panel(konten, title="RENCANA DAN LAPORAN PERTEMUAN", border_style="blue", expand=True))
+    info(CATATAN_PROYEKSI)
+
+
+def _detail_kelas_siswa(row):
+    """Halaman konteks satu enrollment; tidak membuka akademik jika H+3 terkunci."""
+    while True:
+        _header("DETAIL KELAS", str(row.get("nama_program") or "Kelas"))
+        status = row.get("status")
+        locked = bool(row.get("akses_terkunci"))
+        schedule = None
+        if status == "aktif" and not locked:
+            ok, payload = student_service.jadwal_saya(program_id=row["program_id"])
+            if not ok:
+                gagal(str(payload))
+            else:
+                schedule = payload
+        _panel_info_kelas(row, schedule)
+        if schedule and status == "aktif" and not locked:
+            _panel_rencana_siswa(schedule, _sesi_per_program_jadwal(schedule), [row])
+        choices = []
+        if status == "aktif" and not locked and schedule is not None:
+            choices.append(Choice("Riwayat pertemuan dan materi", value="sessions"))
+        choices.append(Choice("Kembali ke daftar kelas", value="back"))
+        action = questionary.select("Pilih tindakan kelas:", choices=choices,
+                                    style=GAYA, qmark="◆", pointer="▶").ask()
+        if action in (None, "back"):
+            return
+        if action == "sessions":
+            _riwayat_pertemuan_siswa(row)
+
+
+def menu_kelas_saya():
+    while True:
+        ok, payload = student_service.kelas_saya()
+        rows = _hasil(ok, payload, "KELAS SAYA")
+        if rows is None:
+            return
+        rows = [r for r in rows if r.get("status") in {"menunggu_pembayaran", "menunggu", "aktif"}]
+        if not rows:
+            _header("KELAS SAYA")
+            info("Belum ada kelas aktif atau pendaftaran berjalan. Buka Katalog Program untuk mendaftar.")
+            _jeda()
+            return
+        # Pada daftar panjang, tampilkan tabel berpaginasi seperti versi sebelumnya
+        # sebelum pengguna memilih detail satu enrollment.
+        if len(rows) > 12:
+            _tabel_paginasi(
+                "KELAS SAYA", rows,
+                [("Program", {"min_width": 22}), ("Jenjang", {"width": 12}),
+                 ("Tutor", {"min_width": 18}), ("Status", {"width": 22})],
+                lambda r: (str(r.get("nama_program") or "—"), str(r.get("jenjang") or "—"),
+                           str(r.get("tutor") or "—"),
+                           "TERKUNCI (TAGIHAN)" if r.get("akses_terkunci") else str(r.get("status") or "—").upper()),
+                subjudul="Pilih satu kelas setelah melihat daftar.", back_label="Lanjut ke detail kelas",
+            )
+        _header("KELAS SAYA", "Pilih salah satu kelas untuk melihat informasi lengkap.")
+        t = Table(show_header=True, header_style="bold cyan", expand=True)
+        for name in ("Program", "Tutor terjadwal", "Status"):
+            t.add_column(name, overflow="fold")
+        for r in rows[:12]:
+            status = "TERKUNCI (TAGIHAN)" if r.get("akses_terkunci") else str(r.get("status") or "—").upper()
+            t.add_row(str(r.get("nama_program") or "—"), str(r.get("tutor") or "Belum ditentukan"), status)
+        console.print(Panel(t, title="KELAS DAN PENDAFTARAN BERJALAN", border_style="blue", expand=True))
+        selected = _pilih_data("Pilih kelas untuk detail", rows,
+            lambda r: f"{r.get('nama_program') or '—'} • {'TAGIHAN H+3' if r.get('akses_terkunci') else str(r.get('status') or '—').upper()}",
+            "enrollment_id")
+        if selected is None:
+            return
+        detail = next((r for r in rows if r.get("enrollment_id") == selected), None)
+        if detail:
+            _detail_kelas_siswa(detail)
+
+
+def _info_jadwal_kosong(kondisi, jadwal_semua):
+    if kondisi == "belum_ada_kelas":
+        info("Belum ada kelas aktif. Lihat Katalog Program untuk mendaftar, atau periksa status pendaftaran.")
+    elif kondisi == "terkunci_tagihan":
+        peringatan("Kelas aktif sedang terkunci karena tagihan H+3. "
+                   "Buka Tagihan dan Pembayaran untuk melunasi tunggakan.")
+    elif kondisi == "belum_dijadwalkan":
+        peringatan("Kelas aktif, tetapi jadwal rutin belum tersedia. Silakan periksa dengan Admin.")
+    elif kondisi == "tidak_ada_hari_ini":
+        info("Tidak ada kelas hari ini. Kelas kamu tetap aktif.")
+        upcoming = jadwal_rutin_terdekat(jadwal_semua)
+        if upcoming:
+            dt, item = upcoming
+            console.print(Panel(
+                f"[bold]{escape(str(item.get('nama_program') or '—'))}[/bold]\n"
+                f"{dt.strftime('%d-%m-%Y')} • {escape(jam_jadwal(item))} • "
+                f"Tutor {escape(str(item.get('nama_tutor') or '—'))}\n"
+                "[dim]Perkiraan berdasarkan jadwal rutin, bukan konfirmasi sesi.[/dim]",
+                title="JADWAL RUTIN BERIKUTNYA", border_style="cyan", expand=True))
 
 
 def menu_jadwal_saya():
     while True:
-        _header("JADWAL SAYA", "Lihat jadwal hari ini, semua jadwal mingguan, atau satu program.")
-        action = questionary.select(
-            "Pilih tampilan jadwal:",
-            choices=[
-                Choice("Jadwal hari ini", value="today"),
-                Choice("Jadwal mingguan", value="week"),
-                Choice("Filter berdasarkan program", value="program"),
-                Choice("Kembali", value="back"),
-            ], style=GAYA, qmark="◆", pointer="▶",
-        ).ask()
-        if action is None or action == "back":
+        _header("JADWAL SAYA", "Jadwal rutin ≠ laporan pertemuan. Pilih ringkasan yang ingin dibuka.")
+        action = questionary.select("Pilih tampilan jadwal:", choices=[
+            Choice("Jadwal hari ini", value="today"),
+            Choice("Jadwal mingguan", value="week"),
+            Choice("Filter berdasarkan program", value="program"),
+            Choice("Kembali", value="back"),
+        ], style=GAYA, qmark="◆", pointer="▶").ask()
+        if action in (None, "back"):
             return
         program_id = None
         if action == "program":
@@ -240,20 +449,40 @@ def menu_jadwal_saya():
             if not p:
                 continue
             program_id = p["program_id"]
-        day = HARI[date.today().weekday()] if action == "today" else None
-        ok, payload = student_service.jadwal_saya(hari=day, program_id=program_id)
-        rows = _hasil(ok, payload, "JADWAL SAYA")
-        if rows is None:
-            continue
+        ok, enrollments = student_service.kelas_saya()
+        if not ok:
+            _header("JADWAL SAYA"); gagal(str(enrollments)); _jeda(); continue
+        ok, all_schedules = student_service.jadwal_saya(program_id=program_id)
+        if not ok:
+            _header("JADWAL SAYA"); gagal(str(all_schedules)); _jeda(); continue
+        day = HARI[date.today().weekday()]
+        rows = [j for j in all_schedules if j.get("hari") == day] if action == "today" else all_schedules
+        kondisi = kondisi_jadwal_siswa(enrollments, all_schedules,
+                                      day if action == "today" else None)
         title = "JADWAL HARI INI" if action == "today" else "JADWAL MINGGUAN"
         if program_id:
             title = f"JADWAL — {p['nama_program']}"
-        _tabel_paginasi(
-            title, rows,
-            [("Hari", {"width": 10}), ("Waktu", {"width": 15}), ("Program", {"min_width": 22}), ("Tutor", {"min_width": 20}), ("Ruang", {"width": 12})],
-            lambda r: (HARI_LABEL.get(r.get("hari"), str(r.get("hari", "—")).capitalize()), f"{_waktu(r.get('jam_mulai'))}-{_waktu(r.get('jam_selesai'))}", str(r.get("nama_program") or "—"), str(r.get("nama_tutor") or "—"), str(r.get("nama_ruang") or "—")),
-            subjudul="Hanya jadwal aktif dari program yang pendaftarannya aktif.",
-        )
+        _header(title, "Informasi jadwal rutin; belum tentu pertemuan sudah dilaksanakan.")
+        if not rows:
+            _info_jadwal_kosong(kondisi, all_schedules)
+            _jeda()
+            continue
+        t = Table(show_header=True, header_style="bold cyan", expand=True)
+        for name in ("Hari", "Waktu", "Program", "Tutor", "Ruang"):
+            t.add_column(name, overflow="fold")
+        for r in rows:
+            t.add_row(label_hari(r.get("hari")), jam_jadwal(r),
+                      str(r.get("nama_program") or "—"), str(r.get("nama_tutor") or "—"),
+                      str(r.get("nama_ruang") or "—"))
+        console.print(Panel(t, title="JADWAL RUTIN", border_style="blue", expand=True))
+        _panel_rencana_siswa(rows, _sesi_per_program_jadwal(rows), enrollments)
+        accessible_programs = {r.get("program_id") for r in all_schedules}
+        missing = [r.get("nama_program") for r in enrollments
+                   if r.get("status") == "aktif" and not r.get("akses_terkunci")
+                   and r.get("program_id") not in accessible_programs]
+        if missing:
+            peringatan("Ada kelas aktif yang belum dijadwalkan: " + ", ".join(str(n) for n in missing))
+        _jeda()
 
 
 def menu_absensi_siswa():
@@ -271,10 +500,12 @@ def menu_absensi_siswa():
     _header("RIWAYAT ABSENSI", p["nama_program"])
     if summaries:
         r = summaries[0]
+        info(f"Pendaftaran #{r.get('enrollment_id') or '—'} • "
+             "Rekap hanya menghitung sesi selesai; absensi dalam proses belum final.")
         t = Table(show_header=True, header_style="bold cyan", expand=True)
         for c in ["Pertemuan", "Hadir", "Izin", "Sakit", "Alpa", "% Hadir"]:
             t.add_column(c, justify="right")
-        t.add_row(str(r.get("total_pertemuan", 0)), str(r.get("hadir", 0)), str(r.get("izin", 0)), str(r.get("sakit", 0)), str(r.get("alpa", 0)), f"{_nilai(r.get('persen_hadir'))}%")
+        t.add_row(str(r.get("total_pertemuan", 0)), str(r.get("hadir", 0)), str(r.get("izin", 0)), str(r.get("sakit", 0)), str(r.get("alpa", 0)), (f"{_nilai(r.get('persen_hadir'))}%" if r.get('persen_hadir') is not None else "—"))
         console.print(Panel(t, title="RINGKASAN", border_style="green", expand=True))
     else:
         info("Belum ada absensi tercatat untuk program ini.")
@@ -282,8 +513,11 @@ def menu_absensi_siswa():
         _jeda("Tekan Enter untuk melihat riwayat per pertemuan...")
         _tabel_paginasi(
             "RIWAYAT PER PERTEMUAN", rows,
-            [("Tanggal", {"width": 14}), ("Ke-", {"width": 5}), ("Status", {"width": 12}), ("Topik", {"min_width": 22}), ("Keterangan", {"min_width": 22})],
-            lambda r: (_tanggal(r.get("tanggal")), str(r.get("pertemuan_ke") or "—"), STATUS_ABSENSI.get(r.get("status_absensi"), str(r.get("status_absensi") or "—")), str(r.get("topik") or "—"), str(r.get("keterangan") or "—")),
+            [("Tanggal", {"width": 14}), ("Ke-", {"width": 5}), ("Status", {"width": 12}), ("Sesi", {"width": 17}), ("Topik", {"min_width": 22}), ("Keterangan", {"min_width": 22})],
+            lambda r: (_tanggal(r.get("tanggal")), str(r.get("pertemuan_ke") or "—"),
+                       STATUS_ABSENSI.get(r.get("status_absensi"), str(r.get("status_absensi") or "—")),
+                       "Selesai" if r.get("status_pertemuan") == "selesai" else "Dalam proses/arsip",
+                       str(r.get("topik") or "—"), str(r.get("keterangan") or "—")),
             subjudul=p["nama_program"],
         )
     else:
