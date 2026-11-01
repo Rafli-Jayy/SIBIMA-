@@ -11,6 +11,8 @@ from app import session
 from app.repositories import enrollment_repo, program_repo, user_repo
 from app.services import billing_service, enrollment_service, engagement_service, student_service
 from app.ui import menu_pembayaran, menu_siswa_academic, menu_notifikasi
+from app.ui.jadwal_context import jadwal_rutin_terdekat, jam_jadwal, kondisi_jadwal_siswa
+from rich.markup import escape
 from app.ui.console import (
     bersihkan_layar,
     console,
@@ -20,6 +22,7 @@ from app.ui.console import (
     sukses,
 )
 from app.utils.formatters import rupiah
+from app.ui.student_dashboard_grid import tampilkan_dashboard_siswa
 
 
 GAYA_SIBIMA = Style([
@@ -134,7 +137,7 @@ def _tabel_pendaftaran(enrollments, judul="Kelas dan Status Pendaftaran"):
     console.print(tabel)
 
 
-def _dashboard(pengguna, enrollments):
+def _dashboard_legacy_007c(pengguna, enrollments):
     bersihkan_layar()
     console.print(
         Panel(
@@ -211,17 +214,6 @@ def _dashboard(pengguna, enrollments):
                     border_style="yellow", padding=(1, 2), expand=True,
                 )
             )
-        if menunggu_bayar:
-            console.print(
-                Panel(
-                    "\n".join(
-                        f"[yellow]•[/yellow] {item['nama_program']} — invoice belum lunas; buka Tagihan & Pembayaran"
-                        for item in menunggu_bayar[:5]
-                    ),
-                    title="[bold yellow]MENUNGGU PEMBAYARAN[/bold yellow]",
-                    border_style="yellow", padding=(1, 2), expand=True,
-                )
-            )
         if menunggu:
             console.print(
                 Panel(
@@ -236,21 +228,40 @@ def _dashboard(pengguna, enrollments):
                 )
             )
 
-    # Ringkasan jadwal dan tagihan di dashboard mengikuti data akun aktif.
+    # Keterangan jadwal berdasarkan data service, bukan mengasumsikan sesi terlaksana.
     try:
         from datetime import date
         hari_ini = ["senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu"][date.today().weekday()]
-        ok_jadwal, jadwal_hari_ini = student_service.jadwal_saya(hari=hari_ini)
+        ok_jadwal, semua_jadwal = student_service.jadwal_saya()
         if ok_jadwal:
-            if jadwal_hari_ini:
-                isi_jadwal = "\n".join(
-                    f"[bold cyan]{item['jam_mulai'].strftime('%H:%M') if hasattr(item.get('jam_mulai'), 'strftime') else str(item.get('jam_mulai', '—'))[:5]}[/bold cyan] "
-                    f"{item.get('nama_program', '—')} • {item.get('nama_ruang', '—')}"
-                    for item in jadwal_hari_ini[:4]
+            hari_ini_rows = [r for r in semua_jadwal if r.get("hari") == hari_ini]
+            status = kondisi_jadwal_siswa(enrollments, semua_jadwal, hari_ini)
+            if hari_ini_rows:
+                isi = "\n".join(
+                    f"[bold cyan]{escape(jam_jadwal(r))}[/bold cyan] "
+                    f"{escape(str(r.get('nama_program') or '—'))} • "
+                    f"{escape(str(r.get('nama_tutor') or 'Tutor belum ditentukan'))} • "
+                    f"{escape(str(r.get('nama_ruang') or 'Ruang belum ditentukan'))}"
+                    for r in hari_ini_rows[:4]
                 )
+            elif status == "belum_ada_kelas":
+                isi = "Belum ada kelas aktif. Mulai dari Katalog Program atau periksa Status Pendaftaran."
+            elif status == "terkunci_tagihan":
+                isi = "Akses jadwal kelas terkunci karena tagihan H+3. Buka menu Tagihan dan Pembayaran."
+            elif status == "belum_dijadwalkan":
+                isi = "Kelas aktif belum memiliki jadwal rutin yang tersedia. Silakan periksa dengan Admin."
             else:
-                isi_jadwal = "Tidak ada jadwal kelas hari ini."
-            console.print(Panel(isi_jadwal, title="[bold cyan]JADWAL HARI INI[/bold cyan]", border_style="bright_blue", padding=(1, 2), expand=True))
+                next_slot = jadwal_rutin_terdekat(semua_jadwal)
+                if next_slot:
+                    dt, r = next_slot
+                    isi = ("Tidak ada kelas hari ini.\n"
+                           f"[dim]Jadwal rutin berikutnya (perkiraan):[/dim] "
+                           f"{escape(str(r.get('nama_program') or '—'))} • "
+                           f"{dt:%d-%m-%Y} {escape(jam_jadwal(r))}")
+                else:
+                    isi = "Tidak ada jadwal rutin yang dapat ditampilkan."
+            console.print(Panel(isi, title="[bold cyan]JADWAL BELAJAR[/bold cyan]",
+                                border_style="bright_blue", padding=(1, 2), expand=True))
     except Exception:
         # Ringkasan dashboard tidak boleh menggagalkan akses ke menu utama.
         pass
@@ -264,6 +275,12 @@ def _dashboard(pengguna, enrollments):
             info("Tagihan belum lunas: tidak ada.")
     except Exception:
         peringatan("Ringkasan tagihan sementara tidak dapat dimuat.")
+
+
+def _dashboard(pengguna, enrollments):
+    """Tampilan dashboard Siswa grid (PATCH-007C)."""
+    bersihkan_layar()
+    tampilkan_dashboard_siswa(pengguna, enrollments)
 
 
 
@@ -289,13 +306,13 @@ def menu_katalog(pengguna):
             _jeda()
             return
 
-        # Schema saat ini memiliki UNIQUE(student_id, program_id), sehingga
-        # satu program yang sudah pernah didaftarkan tidak dapat didaftarkan ulang.
-        pernah_didaftarkan = {item["program_id"] for item in enrollments}
-        program_tersedia = [
-            p for p in semua_program
-            if p["id"] not in pernah_didaftarkan
-        ]
+        # Hanya pendaftaran yang sedang berjalan yang menghalangi daftar ulang.
+        # Riwayat batal/ditolak/selesai tetap tercatat, tetapi bisa daftar baru.
+        sedang_diikuti = {
+            item["program_id"] for item in enrollments
+            if item["status"] in {"menunggu_pembayaran", "menunggu", "aktif"}
+        }
+        program_tersedia = [p for p in semua_program if p["id"] not in sedang_diikuti]
 
         if program_tersedia:
             menu_siswa_academic.tampilkan_katalog_paginasi(program_tersedia)
@@ -312,8 +329,8 @@ def menu_katalog(pengguna):
 
         if semua_program and not program_tersedia:
             info(
-                "Semua program yang tersedia mungkin sudah pernah kamu daftarkan. "
-                "Pendaftaran ulang ke program yang sama belum didukung oleh constraint database saat ini."
+                "Semua program yang tersedia sedang kamu ikuti atau masih menunggu proses. "
+                "Program yang dibatalkan dapat didaftarkan ulang setelah pendaftaran sebelumnya ditutup."
             )
 
         dipilih = menu_siswa_academic.pilih_data_paginasi(
@@ -382,8 +399,8 @@ def menu_status_pendaftaran(pengguna, enrollments):
 
     if any(item["status"] in {"ditolak", "batal"} for item in enrollments):
         peringatan(
-            "Riwayat yang ditolak/dibatalkan tetap disimpan. Pendaftaran ulang "
-            "ke program yang sama belum didukung oleh aturan unik database saat ini."
+            "Riwayat yang ditolak/dibatalkan tetap disimpan. Kamu bisa mendaftar "
+            "ulang ke program yang sama melalui Katalog Program."
         )
 
     _jeda()
@@ -643,8 +660,8 @@ def jalankan():
             "Apa yang ingin kamu lakukan?",
             choices=[
                 Choice("🎓  Katalog Program — cari dan daftar kelas", value="katalog"),
-                Choice("📚  Kelas Saya — status dan riwayat", value="pendaftaran"),
-                Choice("🗓️  Jadwal Saya", value="jadwal"),
+                Choice("📚  Kelas Saya — pilih & lihat detail kelas", value="pendaftaran"),
+                Choice("🗓️  Jadwal Saya — hari ini & mingguan", value="jadwal"),
                 Choice("📝  Absensi", value="absensi"),
                 Choice("📊  Nilai dan Rapor", value="nilai"),
                 Choice("💳  Tagihan dan Pembayaran", value="pembayaran"),
