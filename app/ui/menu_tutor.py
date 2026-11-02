@@ -11,7 +11,7 @@ from rich.text import Text
 from app import session
 from app.ui.console import console, bersihkan_layar, gagal, sukses
 from app.ui.tutor_dashboard_grid import tampilkan_dashboard_tutor
-from app.ui import menu_tutor_academic, menu_notifikasi
+from app.ui import menu_tutor_academic, menu_notifikasi, menu_tutor_pengumuman, menu_tutor_tertunda
 from app.services import engagement_service
 
 _GAYA = Style([
@@ -50,12 +50,13 @@ def jalankan():
         _dashboard(pengguna)
 
         try:
+            engagement_service.sinkronisasi_notifikasi("tutor")
             jumlah_belum_dibaca = engagement_service.jumlah_notifikasi_belum_dibaca("tutor")
         except Exception:
             jumlah_belum_dibaca = 0
         label_notifikasi = (
-            f"  🔔  Notifikasi ({jumlah_belum_dibaca} belum dibaca)"
-            if jumlah_belum_dibaca > 0 else "  🔔  Notifikasi"
+            f"  {len(_MENU_AKADEMIK) + 1:02d}  Notifikasi ({jumlah_belum_dibaca} belum dibaca)"
+            if jumlah_belum_dibaca > 0 else f"  {len(_MENU_AKADEMIK) + 1:02d}  Notifikasi"
         )
 
         choices = [Separator("────────── AKADEMIK ──────────")]
@@ -64,10 +65,12 @@ def jalankan():
             for index, (label, kode) in enumerate(_MENU_AKADEMIK, start=1)
         )
         choices.append(Choice(label_notifikasi, value="notifikasi"))
+        choices.append(Choice(f"  {len(_MENU_AKADEMIK) + 2:02d}  Pengumuman Kelas", value="pengumuman_tutor"))
+        choices.append(Choice(f"  {len(_MENU_AKADEMIK) + 3:02d}  Pertemuan Tertunda", value="tertunda"))
         choices.append(Separator("────────── AKUN ──────────────"))
         choices.extend(
             Choice(f"  {index:02d}  {label}", value=kode)
-            for index, (label, kode) in enumerate(_MENU_AKUN, start=len(_MENU_AKADEMIK) + 1)
+            for index, (label, kode) in enumerate(_MENU_AKUN, start=len(_MENU_AKADEMIK) + 4)
         )
         choices.extend([
             Separator("─────────────────────────────"),
@@ -90,6 +93,14 @@ def jalankan():
             return
 
         if pilihan == "notifikasi":
-            menu_notifikasi.jalankan("tutor")
+            tujuan = menu_notifikasi.jalankan("tutor")
+            if tujuan == "tertunda":
+                menu_tutor_tertunda.jalankan()
+            elif tujuan:
+                menu_tutor_academic.jalankan_modul(tujuan)
+        elif pilihan == "pengumuman_tutor":
+            menu_tutor_pengumuman.jalankan()
+        elif pilihan == "tertunda":
+            menu_tutor_tertunda.jalankan()
         else:
             menu_tutor_academic.jalankan_modul(pilihan)

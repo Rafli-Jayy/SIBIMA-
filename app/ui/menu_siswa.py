@@ -649,6 +649,7 @@ def jalankan():
 
         _dashboard(pengguna, enrollments)
         try:
+            engagement_service.sinkronisasi_notifikasi("siswa")
             jumlah_belum_dibaca = engagement_service.jumlah_notifikasi_belum_dibaca("siswa")
         except (psycopg.Error, PermissionError, ValueError):
             jumlah_belum_dibaca = 0
@@ -699,7 +700,17 @@ def jalankan():
         elif pilihan == "materi":
             menu_siswa_academic.menu_catatan_materi()
         elif pilihan == "notifikasi":
-            menu_notifikasi.jalankan("siswa")
+            tujuan_notifikasi = menu_notifikasi.jalankan("siswa")
+            if tujuan_notifikasi == "nilai":
+                menu_siswa_academic.menu_nilai_rapor()
+            elif tujuan_notifikasi == "absensi":
+                menu_siswa_academic.menu_absensi_siswa()
+            elif tujuan_notifikasi == "jadwal":
+                menu_siswa_academic.menu_jadwal_saya()
+            elif tujuan_notifikasi == "pembayaran":
+                menu_pembayaran.menu_pembayaran_siswa()
+            elif tujuan_notifikasi == "pendaftaran":
+                menu_siswa_academic.menu_kelas_saya()
         elif pilihan == "ai":
             menu_siswa_academic.menu_tanya_ai_info()
         elif pilihan == "profil":
