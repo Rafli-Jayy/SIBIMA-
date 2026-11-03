@@ -19,6 +19,7 @@ def gagal(pesan):
     console.print(f"[bold red]✗[/bold red] {pesan}")
 
 
+
 def info(pesan):
     console.print(f"[bold cyan]i[/bold cyan] {pesan}")
 

@@ -1,31 +1,39 @@
+
 """Koneksi PostgreSQL SIBIMA menggunakan satu connection pool bersama."""
 
 from psycopg.conninfo import make_conninfo
 from psycopg_pool import ConnectionPool
+
 from app.ui.console import gagal, info, sukses
-from app.config import DB_CONFIG
+from app.config import DB_CONFIG, DB_TARGET
 
 
-# Konfigurasi ini wajib tersedia di file .env.
+# Nama variabel .env berdasarkan database yang dipilih.
+_PREFIX = "SUPABASE_DB" if DB_TARGET == "supabase" else "DB"
+
 _NAMA_ENV = {
-    "dbname": "DB_NAME",
-    "user": "DB_USER",
-    "password": "DB_PASSWORD",
+    "host": f"{_PREFIX}_HOST",
+    "port": f"{_PREFIX}_PORT",
+    "dbname": f"{_PREFIX}_NAME",
+    "user": f"{_PREFIX}_USER",
+    "password": f"{_PREFIX}_PASSWORD",
 }
+
 _kurang = [
     env_name
     for key, env_name in _NAMA_ENV.items()
     if not DB_CONFIG.get(key)
 ]
+
 if _kurang:
     raise RuntimeError(
-        "Konfigurasi database belum lengkap: "
+        f"Konfigurasi database '{DB_TARGET}' belum lengkap: "
         + ", ".join(_kurang)
-        + ". Salin .env.example menjadi .env dan isi nilainya."
+        + ". Periksa file .env."
     )
 
-# make_conninfo menangani karakter khusus pada nama pengguna/password.
-# Host dan port tetap menggunakan default dari app.config jika tidak diubah.
+
+# make_conninfo menangani karakter khusus di username/password.
 conninfo = make_conninfo(
     **{
         key: value
@@ -34,44 +42,64 @@ conninfo = make_conninfo(
     }
 )
 
-# Pool hanya dibuat satu kali. Repository yang mengimpor `pool` memakai
-# objek yang sama selama aplikasi berjalan.
+
+def konfigurasi_koneksi(conn) -> None:
+    """Mengatur timezone untuk setiap koneksi baru dalam pool."""
+    conn.execute("SET TIME ZONE 'Asia/Jakarta'")
+    conn.commit()
+
+
+# Satu pool bersama untuk seluruh repository SIBIMA.
 pool = ConnectionPool(
     conninfo=conninfo,
-    kwargs={"options": "-c timezone=Asia/Jakarta"},
+    configure=konfigurasi_koneksi,
     min_size=1,
     max_size=5,
     open=True,
 )
+
 _pool_ditutup = False
 
 
 def tes_koneksi() -> bool:
-    """Menguji koneksi PostgreSQL dan menampilkan hasilnya di terminal."""
+    """Menguji koneksi PostgreSQL aktif."""
 
     try:
+        info(f"Database aktif: {DB_TARGET.upper()}")
         info("Mencoba menghubungi PostgreSQL...")
+
         with pool.connection(timeout=10) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT version();")
-                versi = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    SELECT
+                        current_database(),
+                        current_setting('server_version'),
+                        current_setting('TimeZone')
+                    """
+                )
+                nama_db, versi, timezone = cur.fetchone()
 
         sukses("Koneksi database berhasil.")
-        info(f"Server: {versi}")
+        info(f"Target  : {DB_TARGET.upper()}")
+        info(f"Database: {nama_db}")
+        info(f"Server  : PostgreSQL {versi}")
+        info(f"Timezone: {timezone}")
+
         return True
+
     except Exception as exc:
         gagal(f"Koneksi database gagal ({type(exc).__name__}).")
         info(
-            "Periksa apakah PostgreSQL aktif, database dan pengguna sudah "
-            "dibuat, serta nilai DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD "
-            "di .env sudah benar."
+            f"Periksa konfigurasi database '{DB_TARGET}' "
+            "di file .env dan koneksi jaringan."
         )
         info(f"Detail error: {exc}")
         return False
 
 
 def tutup_pool() -> None:
-    """Menutup connection pool ketika program benar-benar selesai."""
+    """Menutup connection pool ketika program selesai."""
     global _pool_ditutup
 
     if not _pool_ditutup:

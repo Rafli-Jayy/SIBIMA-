@@ -1,3 +1,4 @@
+
 """Konfigurasi aplikasi. Semua nilai dibaca dari file .env."""
 import os
 from pathlib import Path
@@ -7,16 +8,36 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": os.getenv("DB_PORT", "5432"),
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+# Pilih database aktif: local atau supabase
+DB_TARGET = os.getenv("DB_TARGET", "local").strip().lower()
+
+if DB_TARGET not in ("local", "supabase"):
+    raise ValueError(
+        "DB_TARGET harus bernilai 'local' atau 'supabase'."
+    )
+
+if DB_TARGET == "local":
+    # Tetap menggunakan nama variabel lokal SIBIMA yang lama.
+    DB_CONFIG = {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": os.getenv("DB_PORT", "5432"),
+        "dbname": os.getenv("DB_NAME"),
+        "user": os.getenv("DB_USER"),
+        "password": os.getenv("DB_PASSWORD"),
+        "sslmode": os.getenv("DB_SSLMODE", "prefer"),
+    }
+else:
+    DB_CONFIG = {
+        "host": os.getenv("SUPABASE_DB_HOST"),
+        "port": os.getenv("SUPABASE_DB_PORT", "5432"),
+        "dbname": os.getenv("SUPABASE_DB_NAME"),
+        "user": os.getenv("SUPABASE_DB_USER"),
+        "password": os.getenv("SUPABASE_DB_PASSWORD"),
+        "sslmode": os.getenv("SUPABASE_DB_SSLMODE", "require"),
+    }
 
 # OTP
-OTP_MODE = os.getenv("OTP_MODE", "simulasi")          # simulasi | email
+OTP_MODE = os.getenv("OTP_MODE", "simulasi")
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
 OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "3"))
 
@@ -24,10 +45,14 @@ OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "3"))
 MAX_LOGIN_ATTEMPTS = int(os.getenv("MAX_LOGIN_ATTEMPTS", "3"))
 LOCK_MINUTES = int(os.getenv("LOCK_MINUTES", "5"))
 
-# Simulasi pembayaran: persentase keberhasilan (0-100), tanpa transaksi uang nyata.
-PAYMENT_SIMULATION_SUCCESS_RATE = int(os.getenv("PAYMENT_SIMULATION_SUCCESS_RATE", "90"))
+# Simulasi pembayaran
+PAYMENT_SIMULATION_SUCCESS_RATE = int(
+    os.getenv("PAYMENT_SIMULATION_SUCCESS_RATE", "90")
+)
 if not 0 <= PAYMENT_SIMULATION_SUCCESS_RATE <= 100:
-    raise ValueError("PAYMENT_SIMULATION_SUCCESS_RATE harus berada di antara 0 dan 100.")
+    raise ValueError(
+        "PAYMENT_SIMULATION_SUCCESS_RATE harus berada di antara 0 dan 100."
+    )
 
 # Email
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
