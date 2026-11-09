@@ -62,6 +62,13 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 
 # Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "medium").strip().lower()
+GEMINI_MAX_ATTEMPTS = int(os.getenv("GEMINI_MAX_ATTEMPTS", "3"))
+GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "60"))
+# Search is opt-in: it may require a Paid Tier project and a browser to
+# display the Search Suggestions required by Google's Grounding terms.
+GEMINI_GOOGLE_SEARCH_ENABLED = os.getenv("GEMINI_GOOGLE_SEARCH_ENABLED", "false").strip().lower() == "true"
 
 # Folder keluaran
 BUKTI_DIR = BASE_DIR / "bukti"

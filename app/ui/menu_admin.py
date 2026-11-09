@@ -1694,6 +1694,11 @@ def jalankan():
             sukses("Logout berhasil. Sesi telah ditutup.")
             return
 
+        if pilihan == "ai":
+            from app.services.ai_service import buka_ai
+            buka_ai("admin")
+            continue
+
         if pilihan == "konfirmasi":
             menu_konfirmasi()
             continue

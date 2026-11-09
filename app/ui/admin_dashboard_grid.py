@@ -26,7 +26,8 @@ KELOMPOK_MENU = (
                   ("Jadwal", "jadwal"))),
     ("Laporan & Komunikasi", (("Laporan", "laporan"),
                              ("Komunikasi", "pengumuman"),
-                             ("Log Aktivitas", "log"))),
+                             ("Log Aktivitas", "log"),
+                             ("SIBIMA-AI", "ai"))),
 )
 
 

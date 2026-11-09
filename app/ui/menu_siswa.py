@@ -712,6 +712,7 @@ def jalankan():
             elif tujuan_notifikasi == "pendaftaran":
                 menu_siswa_academic.menu_kelas_saya()
         elif pilihan == "ai":
-            menu_siswa_academic.menu_tanya_ai_info()
+            from app.services.ai_service import buka_ai
+            buka_ai("siswa")
         elif pilihan == "profil":
             menu_siswa_academic.menu_profil_siswa()

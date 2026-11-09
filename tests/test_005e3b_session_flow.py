@@ -223,7 +223,7 @@ def test_roster_query_menggunakan_tanggal_aktivasi_dan_kehadiran_lama():
 
 def test_schema_mempertahankan_nilai_legacy():
     schema = (ROOT / 'sql/schema.sql').read_text(encoding='utf-8')
-    assert "'terlaksana', 'batal', 'perlu_laporan', 'selesai'" in schema
+    assert "'terlaksana','batal','perlu_laporan','selesai'" in "".join(schema.split())
     assert "DEFAULT 'perlu_laporan'" in schema
     assert 'selesai_at' in schema and 'alasan_batal' in schema
 

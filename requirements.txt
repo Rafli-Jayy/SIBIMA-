@@ -1,25 +1,33 @@
-# Database
-psycopg[binary,pool]>=3.2
+# SIBIMA AI - Python dependencies
+# Dibuat dari import aktual dalam SIBIMA EAI.zip (9 November 2026).
+# Instalasi: python -m pip install -r requirements.txt
+# Rentang versi mencegah perpindahan mayor tanpa pengujian ulang.
 
-# Konfigurasi dan keamanan
-python-dotenv
-bcrypt
+# PostgreSQL (psycopg 3 + driver binary + connection pool)
+psycopg[binary,pool]>=3.2,<4
 
-# Tampilan dan interaksi CLI
-rich
-questionary
+# Konfigurasi & keamanan akun
+python-dotenv>=1.0,<2
+bcrypt>=4.0,<6
+email-validator>=2.0,<3
 
-# Validasi
-email-validator
+# Antarmuka terminal
+rich>=13.7,<16
+questionary>=2.0,<3
 
-# PDF bukti pembayaran
-reportlab>=4.2
+# PDF dan Excel
+reportlab>=4.0,<5
+openpyxl>=3.1,<4
 
-# AI (Gemini)
-google-genai
+# SIBIMA-AI: Gemini Interactions API + embedding RAG
+# gemini_client.py memerlukan google-genai >= 2.3.0.
+google-genai>=2.3.0,<3
 
-# Pengujian
-pytest
+# RAG: penyimpanan vektor lokal dan pembacaan PDF
+# Dapat terinstal meskipun SIBIMA_RAG_ENABLED=false.
+chromadb>=1.5,<2
+PyMuPDF>=1.24,<2
 
-# Ekspor laporan Excel berformat
-openpyxl>=3.1
+# Pengujian (tests/ menggunakan pytest dan mengimpor pydantic secara langsung)
+pytest>=8.0,<10
+pydantic>=2.12,<3

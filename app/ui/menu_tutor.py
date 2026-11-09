@@ -67,6 +67,7 @@ def jalankan():
         choices.append(Choice(label_notifikasi, value="notifikasi"))
         choices.append(Choice(f"  {len(_MENU_AKADEMIK) + 2:02d}  Pengumuman Kelas", value="pengumuman_tutor"))
         choices.append(Choice(f"  {len(_MENU_AKADEMIK) + 3:02d}  Pertemuan Tertunda", value="tertunda"))
+        choices.append(Choice("  🤖  SIBIMA-AI", value="ai"))
         choices.append(Separator("────────── AKUN ──────────────"))
         choices.extend(
             Choice(f"  {index:02d}  {label}", value=kode)
@@ -92,7 +93,10 @@ def jalankan():
             input("\nTekan Enter untuk kembali ke menu utama...")
             return
 
-        if pilihan == "notifikasi":
+        if pilihan == "ai":
+            from app.services.ai_service import buka_ai
+            buka_ai("tutor")
+        elif pilihan == "notifikasi":
             tujuan = menu_notifikasi.jalankan("tutor")
             if tujuan == "tertunda":
                 menu_tutor_tertunda.jalankan()
