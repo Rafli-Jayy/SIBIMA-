@@ -16,17 +16,19 @@ RAG_TOOL = "search_knowledge_base"
 # Conservative checks for explicit requests about *current private data*.
 # General questions like "apa itu pembayaran" intentionally do not match.
 _DATABASE_REQUIREMENTS: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
-    (re.compile(r"\b(?:jumlah|berapa|total|ringkasan)\s+(?:akun\s+)?siswa\s+aktif\b", re.I),
-     frozenset({"get_admin_overview"})),
+    (re.compile(r"\b(?:jumlah|berapa|total|ringkasan)\s+akun\s+siswa\s+aktif\b", re.I),
+     frozenset({"get_admin_overview", "admin_enrollment_overview"})),
+    (re.compile(r"\b(?:jumlah|berapa|total|ringkasan)\s+siswa\s+aktif\b", re.I),
+     frozenset({"get_admin_overview", "admin_enrollment_overview", "admin_dynamic_query", "tutor_dynamic_query"})),
     (re.compile(r"\b(?:status\s+)?pendaftaran\s+(?:saya|ku|program\s+\S+\s+saya)\b|"
                 r"\b(?:pendaftaran|kelas)\s+saya\s+(?:sudah|masih|belum)\b", re.I),
-     frozenset({"get_my_enrollments"})),
+     frozenset({"get_my_enrollments", "student_dynamic_query"})),
     (re.compile(r"\b(?:tagihan|invoice)\s+(?:saya|ku)\b", re.I),
-     frozenset({"get_my_invoices"})),
+     frozenset({"get_my_invoices", "student_dynamic_query"})),
     (re.compile(r"\b(?:pembayaran|riwayat\s+pembayaran)\s+(?:saya|ku)\b", re.I),
-     frozenset({"get_my_payments", "get_my_enrollments"})),
+     frozenset({"get_my_payments", "get_my_enrollments", "student_dynamic_query"})),
     (re.compile(r"\bnilai\s+(?:akademik\s+)?(?:saya|ku)\b", re.I),
-     frozenset({"get_my_grades"})),
+     frozenset({"get_my_grades", "student_dynamic_query"})),
     (re.compile(r"\bjadwal\s+(?:mengajar\s+)?(?:saya|ku)\b", re.I),
      frozenset({"get_my_teaching_schedule", "get_my_schedule"})),
     (re.compile(r"\b(?:siapa\s+(?:nama\s+)?saya|nama\s+(?:akun\s+)?(?:saya|gw|gue)|\busername\s+saya|\bakun\s+(?:yang\s+)?(?:sedang\s+)?login)\b", re.I),
@@ -43,6 +45,17 @@ _DATABASE_REQUIREMENTS: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
                 r"daftar\s+tagihan\s+belum\s+lunas)\b", re.I),
      frozenset({"list_unpaid_invoices"})),
 )
+# Explicit current-history requests must have real PostgreSQL evidence.
+_HISTORY_DATABASE_REQUIREMENTS = (
+    (re.compile(r"\b(?:histori|riwayat|log|aktivitas)\s+(?:sistem|semua\s+pengguna)\b", re.I),
+     frozenset({"admin_system_history", "admin_history_analytics"})),
+    (re.compile(r"\b(?:histori|riwayat|aktivitas)\s+(?:pengguna|tutor|siswa)\b", re.I),
+     frozenset({"admin_user_activity", "admin_user_timeline"})),
+    (re.compile(r"\b(?:histori|riwayat)\s+(?:pendaftaran|tagihan|pembayaran)\s+"
+                r"(?:siswa|pengguna|tutor)\b", re.I),
+     frozenset({"admin_user_timeline"})),
+)
+_DATABASE_REQUIREMENTS = _DATABASE_REQUIREMENTS + _HISTORY_DATABASE_REQUIREMENTS
 _DOCUMENT_REQUEST = re.compile(
     r"\b(?:chatscreen|chat_screen|streaming_renderer|response_renderer|"
     r"databasefunctionchat|ai_service|ai_db_chat|aitoolcontroller|"
@@ -85,6 +98,13 @@ _FIELDS_FOR_TOOL = {
     "admin_find_users": ("user_id", "nama_lengkap", "username", "role", "status", "jadwal_mengajar_aktif", "program_diajar_aktif", "pendaftaran_aktif"),
     "admin_get_user_summary": ("user_id", "nama_lengkap", "username", "role", "status", "jadwal_mengajar_aktif", "program_diajar_aktif", "pendaftaran_aktif"),
     "admin_list_students_by_tutor": ("program", "siswa", "status_pendaftaran"),
+    "admin_system_history": ("aksi", "pelaku", "waktu"),
+    "admin_user_activity": ("aksi", "pelaku", "waktu"),
+    "admin_user_timeline": ("jenis_peristiwa", "waktu", "program", "status_terkini"),
+    "admin_history_analytics": ("kelompok", "jumlah"),
+    "admin_dynamic_query": ("program", "status", "bulan", "tutor", "jenis", "nilai"),
+    "tutor_dynamic_query": ("program", "bulan", "nilai"),
+    "student_dynamic_query": ("program", "status", "bulan", "jenis", "nilai"),
 }
 
 
@@ -119,10 +139,16 @@ class HybridEvidence:
     document_errors: int = 0
     documents: list[tuple[str, str, str]] = field(default_factory=list)
     database_results: list[tuple[str, list[dict]]] = field(default_factory=list)
+    # Scoped analytics are evidence only for the matching factual domain.
+    scoped_dynamic_domains: set[tuple[str, str]] = field(default_factory=set)
 
     def record(self, name: str, result: object) -> None:
         if name != RAG_TOOL:
             self.tools.add(name)
+            if name in {"tutor_dynamic_query", "student_dynamic_query"} and isinstance(result, dict):
+                planned = result.get("rencana")
+                if isinstance(planned, dict) and isinstance(planned.get("domain"), str):
+                    self.scoped_dynamic_domains.add((name, planned["domain"]))
             rows = result.get("data") if isinstance(result, dict) else None
             if isinstance(rows, list):
                 # Only retain allowlisted fields from authenticated repository results.
@@ -153,10 +179,26 @@ class HybridEvidence:
                 self.documents.append((title, section, document_id))
 
     def _missing_database(self, query: str) -> bool:
-        return any(
-            pattern.search(query) and not (allowed & self.tools)
-            for pattern, allowed in _DATABASE_REQUIREMENTS
-        )
+        scoped_names = {"tutor_dynamic_query", "student_dynamic_query"}
+        for pattern, allowed in _DATABASE_REQUIREMENTS:
+            if not pattern.search(query):
+                continue
+            # Legacy/administrator tools are checked exactly as before.
+            if (allowed - scoped_names) & self.tools:
+                continue
+            required_domain = (
+                "pembayaran" if "get_my_payments" in allowed else
+                "tagihan" if "get_my_invoices" in allowed else
+                "nilai" if "get_my_grades" in allowed else
+                "pendaftaran" if "get_my_enrollments" in allowed else
+                "pendaftaran" if "tutor_dynamic_query" in allowed else None
+            )
+            if required_domain is not None and any(
+                    (tool, required_domain) in self.scoped_dynamic_domains
+                    for tool in (allowed & scoped_names)):
+                continue
+            return True
+        return False
 
     def _documents_sufficient(self, query: str) -> bool:
         if not self.documents:

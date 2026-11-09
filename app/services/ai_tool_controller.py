@@ -3,7 +3,15 @@ from __future__ import annotations
 
 from app import session
 from app.repositories.ai_read_repo import AIReadRepository
+from app.services.ai_history_plan import (
+    HISTORY_TOOLS, tool_schema as history_schema, validate_history_args,
+)
+from app.services.ai_query_planner import (
+    TOOL_ROLE as PATCH5C_TOOLS, tool_schema as analytics_schema, validate_plan,
+)
 from app.services.rag.rag_chat_tool import (RAGKnowledgeTool, TOOL_DECLARATION, TOOL_NAME)
+from app.services.ai_dynamic_plan import (NAME as DYNAMIC_NAME, ROLE_DYNAMIC_NAMES,
+                                          role_dynamic_schema, validate_role_dynamic_plan)
 
 # Base role matrix retained unchanged; additional tools are explicitly separated.
 EXTRA_ROLE_TO_TOOLS = {
@@ -15,6 +23,10 @@ ROLE_TO_TOOLS = {
     "admin": ("get_admin_overview", "list_unpaid_invoices"),
     "tutor": ("get_my_teaching_schedule", "list_my_class_students", "get_my_class_attendance"),
     "siswa": ("get_my_schedule", "get_my_grades", "get_my_attendance", "get_my_invoices", "get_my_payments", "get_my_enrollments"),
+}
+PATCH5C_ROLE_TO_TOOLS = {
+    role: tuple(name for name, allowed_role in PATCH5C_TOOLS.items() if allowed_role == role)
+    for role in ("admin", "tutor", "siswa")
 }
 DESCRIPTIONS = {
     "get_my_identity": "Kenali nama lengkap, username, role dan status akun yang SEDANG login. Gunakan untuk pertanyaan nama saya/akun saya/siapa saya. Tidak menerima parameter user_id.",
@@ -37,6 +49,12 @@ WITH_PROGRAM = {"list_my_class_students", "get_my_class_attendance", "get_my_gra
 
 
 def tool_schema(name: str) -> dict:
+    if name in ROLE_DYNAMIC_NAMES.values():
+        return role_dynamic_schema(next(role for role, tool in ROLE_DYNAMIC_NAMES.items() if tool == name))
+    if name in PATCH5C_TOOLS:
+        return analytics_schema(name)
+    if name in HISTORY_TOOLS:
+        return history_schema(name)
     props = {}
     if name in WITH_PROGRAM:
         props["program_id"] = {"type": "integer", "description": "Filter ID program; hilangkan jika seluruh program yang diizinkan."}
@@ -60,6 +78,12 @@ def tool_schema(name: str) -> dict:
 
 
 def validate_args(name: str, args: object) -> dict:
+    if name in ROLE_DYNAMIC_NAMES.values():
+        return validate_role_dynamic_plan(args, next(role for role, tool in ROLE_DYNAMIC_NAMES.items() if tool == name))
+    if name in PATCH5C_TOOLS:
+        return validate_plan(name, args, PATCH5C_TOOLS[name])
+    if name in HISTORY_TOOLS:
+        return validate_history_args(name, args)
     if not isinstance(args, dict):
         raise ValueError("Parameter fungsi harus objek JSON.")
     allowed = ({"program_id"} if name in WITH_PROGRAM else
@@ -102,7 +126,9 @@ class AIToolController:
         self.rag_tool = rag_tool if rag_tool is not None else RAGKnowledgeTool.from_environment()
 
     def declarations(self) -> list[dict]:
-        tools = [tool_schema(n) for n in ROLE_TO_TOOLS[self.role] + EXTRA_ROLE_TO_TOOLS[self.role]]
+        tools = [tool_schema(n) for n in ROLE_TO_TOOLS[self.role] + EXTRA_ROLE_TO_TOOLS[self.role]
+                 + PATCH5C_ROLE_TO_TOOLS[self.role] + (HISTORY_TOOLS if self.role == "admin" else ())]
+        tools.append(tool_schema(ROLE_DYNAMIC_NAMES[self.role]))
         if self.rag_tool is not None:
             tools.append(dict(TOOL_DECLARATION))
         return tools
@@ -120,20 +146,26 @@ class AIToolController:
             if not isinstance(arguments, dict) or set(arguments) != {"query"}:
                 raise ValueError("Pencarian RAG hanya menerima parameter query.")
             return self.rag_tool.search(arguments["query"], role=self.role)
-        if name not in ROLE_TO_TOOLS[self.role] + EXTRA_ROLE_TO_TOOLS[self.role]:
+        allowed = (ROLE_TO_TOOLS[self.role] + EXTRA_ROLE_TO_TOOLS[self.role] +
+                   PATCH5C_ROLE_TO_TOOLS[self.role] + (HISTORY_TOOLS if self.role == "admin" else ()) +
+                   (ROLE_DYNAMIC_NAMES[self.role],))
+        if name not in allowed:
             raise PermissionError("Fungsi tidak diizinkan untuk role ini.")
         args = validate_args(name, arguments)
         if name == "admin_list_students_by_tutor" and args["tutor_user_id"] not in self._discovered_tutor_ids:
             raise PermissionError("Cari nama Tutor dahulu melalui pencarian Admin yang sah.")
         if name == "admin_list_students_by_tutor" and len(self._discovered_tutor_ids) > 1:
             raise PermissionError("Ada lebih dari satu Tutor yang cocok. Perjelas nama/username dan cari ulang sebelum membuka daftar siswa.")
-        if name == "admin_get_user_summary" and args["user_id"] not in self._discovered_user_ids:
+        if name in ("admin_get_user_summary", "admin_user_activity", "admin_user_timeline") and args["user_id"] not in self._discovered_user_ids:
             raise PermissionError("Pilih akun terlebih dahulu melalui pencarian nama Admin.")
+        if name in ("admin_user_activity", "admin_user_timeline") and len(self._discovered_user_ids) > 1:
+            raise PermissionError("Beberapa akun cocok; cari ulang menggunakan nama/username lebih spesifik.")
         if name == "admin_find_users":
             # Invalidate previous discovery before new lookup, even if the
             # database lookup fails and cannot return a candidate list.
             self._discovered_user_ids.clear()
             self._discovered_tutor_ids.clear()
+        # Read-only history uses the same repository/session/role checks as every AI tool.
         result = self.repo.execute(self.user_id, self.role, name, args)
         if name == "admin_find_users" and isinstance(result, dict):
             for row in result.get("data", [])[:10]:

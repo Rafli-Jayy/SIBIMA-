@@ -9,6 +9,9 @@ from datetime import date, datetime, time
 from decimal import Decimal
 
 from app.repositories.class_access_sql import AKSES_TERKUNCI_SQL, ENROLLMENT_TERAKHIR_TERSEDIA_SQL
+from app.services.ai_query_planner import TOOL_ROLE as ANALYTICS_TOOLS
+from app.services.ai_history_plan import HISTORY_TOOLS, validate_history_args
+from app.services.ai_dynamic_plan import NAME as DYNAMIC_NAME, ROLE_DYNAMIC_NAMES, validate_role_dynamic_plan
 
 MAX_ROWS = 20
 AUTHORIZED = {
@@ -229,7 +232,11 @@ class AIReadRepository:
         self._pool = pool
 
     def execute(self, user_id: int, role: str, name: str, args: dict) -> dict:
-        if name not in (set(QUERIES) | set(EXTRA_QUERIES) | {"admin_list_students_by_tutor"}) or name not in (AUTHORIZED.get(role, set()) | EXTRA_AUTHORIZED.get(role, set())):
+        if name not in (set(QUERIES) | set(EXTRA_QUERIES) | {"admin_list_students_by_tutor"} | set(ANALYTICS_TOOLS) | set(HISTORY_TOOLS) | set(ROLE_DYNAMIC_NAMES.values())) or (
+                name not in (AUTHORIZED.get(role, set()) | EXTRA_AUTHORIZED.get(role, set()))
+                and ANALYTICS_TOOLS.get(name) != role
+                and not (name in HISTORY_TOOLS and role == "admin")
+                and not (name == ROLE_DYNAMIC_NAMES.get(role))):
             raise PermissionError("Fungsi tidak diizinkan.")
         if type(user_id) is not int or user_id <= 0:
             raise PermissionError("Sesi tidak valid.")
@@ -247,6 +254,22 @@ class AIReadRepository:
                     current = cur.fetchone()
                     if not current or current["role"] != role or current["status"] != "aktif":
                         raise PermissionError("Sesi pengguna tidak lagi aktif atau berubah.")
+                    if name == ROLE_DYNAMIC_NAMES.get(role):
+                        # The role and login ID come from the authenticated, active
+                        # PostgreSQL session, NEVER from Gemini's JSON arguments.
+                        from app.repositories.ai_dynamic_repo import execute_dynamic
+                        validated = validate_role_dynamic_plan(args, role)
+                        return execute_dynamic(cur, role, validated, user_id=user_id)
+                    if name in HISTORY_TOOLS:
+                        # Defense in depth: apply the same strict schema even if
+                        # this repository is invoked without AIToolController.
+                        from app.repositories.ai_history_repo import execute_history
+                        return execute_history(cur, role, name, validate_history_args(name, args))
+                    if name in ANALYTICS_TOOLS:
+                        # Run inside the same checked READ ONLY transaction as Patch 3.
+                        # A separate module holds all fixed aggregation queries.
+                        from app.repositories.ai_analytics_repo import execute_analytics
+                        return execute_analytics(cur, user_id, role, name, args)
                     if name == "get_admin_overview":
                         params = ()
                     elif name == "get_my_identity":

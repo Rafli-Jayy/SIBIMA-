@@ -1,4 +1,5 @@
 """All tests offline, no network, no connection to PostgreSQL."""
+from app.services.ai_dynamic_plan import NAME as DYNAMIC_NAME
 from types import SimpleNamespace as NS
 from contextlib import contextmanager
 import sys
@@ -6,7 +7,9 @@ import types
 
 import pytest
 from app import session
-from app.services.ai_tool_controller import AIToolController, ROLE_TO_TOOLS, EXTRA_ROLE_TO_TOOLS
+from app.services.ai_tool_controller import AIToolController, ROLE_TO_TOOLS, EXTRA_ROLE_TO_TOOLS, PATCH5C_ROLE_TO_TOOLS
+from app.services.ai_dynamic_plan import ROLE_DYNAMIC_NAMES
+from app.services.ai_history_plan import HISTORY_TOOLS
 from app.services.ai_db_chat import DatabaseFunctionChat
 from app.services.ai_service import AIService
 from app.services.gemini_client import GeminiClient, GeminiOptions
@@ -73,7 +76,7 @@ def test_tool_allowlist_including_enrollment_status():
         login(role)
         control = AIToolController(role, repo=FakeRepo())
         declared = {item["name"] for item in control.declarations()}
-        expected = set(allowed) | set(EXTRA_ROLE_TO_TOOLS[role])  # PATCH4F1_EXTRA_ROLE_TOOLS
+        expected = set(allowed) | set(EXTRA_ROLE_TO_TOOLS[role]) | set(PATCH5C_ROLE_TO_TOOLS[role]) | (set(HISTORY_TOOLS) if role == "admin" else set()) | {ROLE_DYNAMIC_NAMES[role]}
         if control.rag_tool is not None:
             expected.add("search_knowledge_base")
         assert declared == expected
